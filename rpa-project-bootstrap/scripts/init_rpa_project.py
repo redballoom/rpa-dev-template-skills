@@ -16,7 +16,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-DEFAULT_TEMPLATE_URL = "git@github.com:redballoom/rpa-dev-template.git"
+DEFAULT_TEMPLATE_URL = "https://github.com/redballoom/rpa-dev-template.git"
 
 TEXT_SUFFIXES = {".bat", ".cmd", ".json", ".md", ".py", ".txt", ".ini", ".yaml", ".yml"}
 IGNORE_DIRS = {".git", "__pycache__", ".pytest_cache", "logs", "crash_snapshots", "data"}
@@ -166,7 +166,6 @@ def validate_handoff_files(root: Path) -> list[str]:
         "docs/SHADOWBOT_INPUT_CONTRACT.md",
         "docs/RPA_PYTHON_BOUNDARY.md",
         "docs/examples",
-        "skills",
         "tests",
     ]
     return [item for item in required if not (root / item).exists()]

@@ -1,6 +1,6 @@
 ---
 name: rpa-project-bootstrap
-description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, preserves handoff docs and project-local skills, initializes Git when requested, and stops before business logic.
+description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, and stops before business logic.
 ---
 
 # RPA Project Bootstrap
@@ -18,7 +18,7 @@ python scripts/init_rpa_project.py --name "项目名" --target "C:\CodePJ\项目
 Optional:
 
 ```powershell
-python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "git@github.com:redballoom/rpa-dev-template.git"
+python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-git
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --force-overwrite
 ```
@@ -34,7 +34,7 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 1. Resolve:
    - `project_name`
    - `target_dir`
-   - `template_url`, default `git@github.com:redballoom/rpa-dev-template.git`
+   - `template_url`, default `https://github.com/redballoom/rpa-dev-template.git`
    - whether to initialize Git
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
@@ -52,8 +52,9 @@ The initialized project should include:
 - `docs/SHADOWBOT_INPUT_CONTRACT.md`
 - `docs/RPA_PYTHON_BOUNDARY.md`
 - `docs/examples/`
-- `skills/`
 - `tests/`
+
+The reusable workflow skills are installed from this external repository, not copied into every initialized project.
 
 ## Validation
 

@@ -31,10 +31,14 @@ These skills are designed to work on any machine where the agent can access Git,
 Default template URL:
 
 ```text
-git@github.com:redballoom/rpa-dev-template.git
+https://github.com/redballoom/rpa-dev-template.git
 ```
 
-The bootstrap script also accepts `--template-url` if another source is needed.
+The bootstrap script also accepts `--template-url` if another source is needed. Use the SSH URL only on machines that already have GitHub SSH keys configured:
+
+```text
+git@github.com:redballoom/rpa-dev-template.git
+```
 
 ## Install Notes
 

@@ -18,8 +18,13 @@ Use this checklist after initializing a project.
 - `docs/RPA_PYTHON_BOUNDARY.md`
 - `docs/ISSUE_FIX_WORKFLOW.md`
 - `docs/examples/`
-- `skills/`
 - `tests/`
+
+The workflow skills live in the external skill repository, not inside every initialized project:
+
+```text
+https://github.com/redballoom/rpa-dev-template-skills
+```
 
 ## Runtime Hygiene
 
