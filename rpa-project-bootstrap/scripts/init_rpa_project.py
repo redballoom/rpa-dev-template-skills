@@ -181,12 +181,46 @@ def init_git(root: Path, project_name: str) -> str:
     return rev.stdout.strip()
 
 
+def run_optional_python_tool(root: Path, args: list[str]) -> dict[str, Any]:
+    script = root / args[0]
+    if not script.exists():
+        return {
+            "status": "skipped",
+            "reason": "missing tool: %s" % args[0],
+            "returncode": None,
+            "stdout": "",
+            "stderr": "",
+        }
+    proc = run([sys.executable, *args], cwd=root, check=False)
+    return {
+        "status": "ok" if proc.returncode == 0 else "failed",
+        "returncode": proc.returncode,
+        "stdout": proc.stdout.strip(),
+        "stderr": proc.stderr.strip(),
+    }
+
+
+def run_post_init_checks(root: Path) -> dict[str, Any]:
+    doctor = run_optional_python_tool(root, ["tools/doctor.py"])
+    handoff_init = run_optional_python_tool(
+        root,
+        ["tools/handoff.py", "init", "--workspace", "initialized", "--project-path", str(root)],
+    )
+    handoff_validate = run_optional_python_tool(root, ["tools/handoff.py", "validate"])
+    return {
+        "doctor": doctor,
+        "handoff_init": handoff_init,
+        "handoff_validate": handoff_validate,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Initialize an RPA Python project from rpa-dev-template")
     parser.add_argument("--name", required=True, help="Project name, Chinese allowed")
     parser.add_argument("--target", default=os.getcwd(), help="Final target project directory")
     parser.add_argument("--template-url", default=DEFAULT_TEMPLATE_URL, help="Remote template Git URL")
     parser.add_argument("--skip-git", action="store_true", help="Do not initialize Git")
+    parser.add_argument("--skip-post-checks", action="store_true", help="Do not run template doctor/handoff checks")
     parser.add_argument("--force-overwrite", action="store_true", help="Allow copying into a non-empty target directory")
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary clone directory for debugging")
     args = parser.parse_args()
@@ -206,6 +240,7 @@ def main() -> int:
         "template_url": args.template_url,
         "missing_handoff_files": [],
         "git_commit": "",
+        "post_init_checks": {},
     }
 
     try:
@@ -218,6 +253,8 @@ def main() -> int:
         update_run_bat(target, project_name)
         missing = validate_handoff_files(target)
         result["missing_handoff_files"] = missing
+        if not args.skip_post_checks:
+            result["post_init_checks"] = run_post_init_checks(target)
         if not args.skip_git:
             result["git_commit"] = init_git(target, project_name)
         result["status"] = "success"

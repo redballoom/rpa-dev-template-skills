@@ -22,6 +22,7 @@ Optional:
 ```powershell
 python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-git
+python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-post-checks
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --force-overwrite
 ```
 
@@ -41,12 +42,11 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
 4. Read the final JSON result.
-5. In the initialized project, run `python tools\doctor.py` if present.
-6. Initialize and validate handoff if present:
-   ```powershell
-   python tools\handoff.py init --workspace initialized --project-path "<target_dir>"
-   python tools\handoff.py validate
-   ```
+5. Read `post_init_checks` from the script result:
+   - `doctor`
+   - `handoff_init`
+   - `handoff_validate`
+6. If post-init checks were skipped or the template is older, report that clearly.
 7. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
 8. Do not implement business logic during initialization.
 
@@ -85,6 +85,7 @@ Include:
 - Test result, if run.
 - Doctor and handoff validation result, if supported by the template.
 - Gate closing block with `initialized` as the current Gate and `contract_review` as the suggested next Gate.
+  Use `post_init_checks.handoff_validate.status` as evidence when available.
 
 Suggested next action for the user:
 
