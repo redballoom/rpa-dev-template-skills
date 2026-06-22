@@ -1,11 +1,13 @@
 ---
 name: rpa-project-bootstrap
-description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, and stops before business logic.
+description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, runs doctor/handoff when available, closes the initialized Gate, and stops before business logic.
 ---
 
 # RPA Project Bootstrap
 
-Use this skill to create a new project from the remote RPA Python template. This skill is intentionally portable: do not rely on local absolute paths such as `C:\Users\redballoon\...`.
+Use this skill to create a new project from the remote RPA Python template. This skill is intentionally portable: do not rely on developer-specific absolute paths such as `C:\Users\someone\...`.
+
+If `rpa-gate-handoff` is available, use it for Gate closing behavior. The user should not need to ask you to read or initialize handoff manually.
 
 ## Primary Script
 
@@ -39,8 +41,14 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
 4. Read the final JSON result.
-5. Report initialized path, missing handoff files, and commit hash.
-6. Do not implement business logic during initialization.
+5. In the initialized project, run `python tools\doctor.py` if present.
+6. Initialize and validate handoff if present:
+   ```powershell
+   python tools\handoff.py init --workspace initialized --project-path "<target_dir>"
+   python tools\handoff.py validate
+   ```
+7. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
+8. Do not implement business logic during initialization.
 
 ## Handoff Expectations
 
@@ -75,12 +83,13 @@ Include:
 - Whether `project.json` was generated and sanitized.
 - Missing handoff files, if any.
 - Test result, if run.
-- Next prompt for business contract design.
+- Doctor and handoff validation result, if supported by the template.
+- Gate closing block with `initialized` as the current Gate and `contract_review` as the suggested next Gate.
 
-Suggested next prompt:
+Suggested next action for the user:
 
 ```text
-阅读 AGENTS.md、README.md、docs/OPERATION_GUIDE.md 和 docs/SHADOWBOT_INPUT_CONTRACT.md。根据我的业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，不要先写 handler。等我确认契约后，再实现代码、示例和测试。
+确认是否进入 contract_review。进入后，根据业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，不要先写 handler。
 ```
 
 ## Guardrails

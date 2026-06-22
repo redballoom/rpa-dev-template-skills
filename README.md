@@ -8,6 +8,7 @@ These skills are designed to work on any machine where the agent can access Git,
 
 | Skill | Purpose |
 | --- | --- |
+| `rpa-gate-handoff` | Coordinate Gate handoff, user confirmation, validation, and milestone commits |
 | `rpa-project-bootstrap` | Initialize a clean RPA Python project from the remote template |
 | `rpa-contract-business` | Drive contract-first business onboarding before writing handlers |
 | `rpa-fix-loop` | Diagnose and repair failed RPA/Python runs |
@@ -25,6 +26,25 @@ These skills are designed to work on any machine where the agent can access Git,
 4. Use `rpa-contract-business` to design `input_{run_id}.json`, `tasks[].type`, `payload`, outputs, exceptions, and tests.
 5. Confirm the contract before code implementation.
 6. Use `rpa-fix-loop` when a run fails.
+
+## Human-AI Collaboration
+
+The user should not need to repeatedly say:
+
+```text
+请读取 .rpa_ai/handoff/current.json，判断当前 Gate。
+```
+
+That is agent behavior. When the template supports `.rpa_ai/workflow.template.json` and `tools/handoff.py`, the skills should make the agent:
+
+1. Read or initialize handoff automatically.
+2. Complete the current Gate.
+3. Validate handoff and relevant checks.
+4. End with a concise Gate closing block.
+5. Wait for user confirmation before advancing.
+6. Create a Git milestone commit after verified stage work when appropriate.
+
+The user mainly provides business intent, confirms or rejects Gates, points out mistakes, and decides whether to continue.
 
 ## Template Repository
 
