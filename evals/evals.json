@@ -8,8 +8,8 @@
     },
     {
       "id": 2,
-      "prompt": "给我初始化 RPA 项目，项目地址是 C:\\CodePJ\\Demo，项目名称是 Demo。初始化完成后告诉我下一步怎么协作。",
-      "expected_output": "Should use rpa-project-bootstrap and gate handoff behavior: run doctor/handoff when available, close initialized Gate, and suggest contract_review."
+      "prompt": "给我初始化 RPA 项目，项目地址是 C:\\CodePJ\\Demo，项目名称是 Demo。使用模板分支 codex/workflow-productization，初始化完成后告诉我下一步怎么协作。",
+      "expected_output": "Should use rpa-project-bootstrap with --template-ref codex/workflow-productization and gate handoff behavior: run doctor/handoff when available, close initialized Gate, and suggest contract_review."
     },
     {
       "id": 3,

@@ -39,6 +39,14 @@ def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subproce
     return proc
 
 
+def clone_template(template_url: str, clone_dir: Path, template_ref: str = "") -> None:
+    cmd = ["git", "clone", "--depth", "1"]
+    if template_ref:
+        cmd.extend(["--branch", template_ref])
+    cmd.extend([template_url, str(clone_dir)])
+    run(cmd)
+
+
 def ensure_empty_or_missing(path: Path, force_overwrite: bool = False) -> None:
     if not path.exists():
         return
@@ -219,6 +227,7 @@ def main() -> int:
     parser.add_argument("--name", required=True, help="Project name, Chinese allowed")
     parser.add_argument("--target", default=os.getcwd(), help="Final target project directory")
     parser.add_argument("--template-url", default=DEFAULT_TEMPLATE_URL, help="Remote template Git URL")
+    parser.add_argument("--template-ref", default="", help="Template branch or tag to clone, for example v2.0.0")
     parser.add_argument("--skip-git", action="store_true", help="Do not initialize Git")
     parser.add_argument("--skip-post-checks", action="store_true", help="Do not run template doctor/handoff checks")
     parser.add_argument("--force-overwrite", action="store_true", help="Allow copying into a non-empty target directory")
@@ -238,6 +247,7 @@ def main() -> int:
         "project_name": project_name,
         "target": str(target),
         "template_url": args.template_url,
+        "template_ref": args.template_ref,
         "missing_handoff_files": [],
         "git_commit": "",
         "post_init_checks": {},
@@ -246,7 +256,7 @@ def main() -> int:
     try:
         tmp_dir = Path(tempfile.mkdtemp(prefix="rpa_template_"))
         clone_dir = tmp_dir / "template"
-        run(["git", "clone", "--depth", "1", args.template_url, str(clone_dir)])
+        clone_template(args.template_url, clone_dir, args.template_ref.strip())
         copy_template(clone_dir, target)
         replace_project_name(target, project_name)
         update_project_json(target, project_name)

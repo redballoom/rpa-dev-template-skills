@@ -21,6 +21,7 @@ Optional:
 
 ```powershell
 python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
+python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-ref "codex/workflow-productization"
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-git
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-post-checks
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --force-overwrite
@@ -38,6 +39,7 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
    - `project_name`
    - `target_dir`
    - `template_url`, default `https://github.com/redballoom/rpa-dev-template.git`
+   - `template_ref` if the user asks for a branch, tag, v2, workflow-enhanced template, or experimental template
    - whether to initialize Git
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
@@ -79,6 +81,7 @@ If tests cannot run, report why and give the exact command for later.
 Include:
 
 - Project path.
+- Template URL and template ref, if one was used.
 - Initial commit hash, if Git was initialized.
 - Whether `project.json` was generated and sanitized.
 - Missing handoff files, if any.

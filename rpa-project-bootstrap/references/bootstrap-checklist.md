@@ -8,6 +8,7 @@ Use this checklist after initializing a project.
 - `project.template.json.project` matches the project name.
 - `project.json.project` matches the project name when generated.
 - `run.bat` project name matches the project name.
+- If the user requested v2, a tag, or a non-main branch, initializer output records `template_ref`.
 
 ## Contract Files
 
