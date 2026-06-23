@@ -38,11 +38,21 @@ At the start of a staged task:
    - delivery notes: `delivery`
    - post-project learning: `retrospective`
 4. Validate handoff before and after stage work when possible.
-5. Do not advance to the next Gate until the user confirms.
+5. Before replying with a Gate closing block, write the stage summary into the handoff file when the project supports `python tools\handoff.py close`.
+6. Do not advance to the next Gate until the user confirms.
 
 ## Closing Every Stage
 
-After every meaningful stage, end with a Gate closing block:
+After every meaningful stage, update the project-local handoff first when supported:
+
+```powershell
+python tools\handoff.py close --status ready_for_review --decision "tasks.type=sync_orders" --artifact "docs/examples/input_sync_orders.json" --verification "python -m pytest tests/ -v: passed" --risk "等待用户确认进入下一 Gate"
+python tools\handoff.py validate
+```
+
+Use one `--decision`, `--artifact`, `--verification`, or `--risk` per concrete item. Keep values concise and mirror them in the human-facing block.
+
+Then end with a Gate closing block:
 
 ```text
 Gate: contract_review
@@ -55,6 +65,8 @@ Needs your confirmation: 是否进入下一阶段？
 ```
 
 Keep it short. This block is for human steering, not a second report.
+
+If `close` is not available, say the template appears to be older, run `validate` if possible, and still provide the Gate closing block. Do not ask the user to manually run `close` unless the agent is blocked from running local commands.
 
 ## User Confirmation
 
@@ -73,6 +85,7 @@ Use these project-local commands when available:
 
 ```powershell
 python tools\handoff.py init --workspace contract_review
+python tools\handoff.py close --status ready_for_review --decision "payload 字段已确认" --artifact "docs/examples/input_your_task_type.json" --verification "python tools/doctor.py: passed" --risk "等待用户确认进入下一 Gate"
 python tools\handoff.py validate
 python tools\handoff.py advance
 python tools\handoff.py archive --label reviewed

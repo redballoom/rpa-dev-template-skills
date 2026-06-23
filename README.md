@@ -40,9 +40,10 @@ That is agent behavior. When the template supports `.rpa_ai/workflow.template.js
 1. Read or initialize handoff automatically.
 2. Complete the current Gate.
 3. Validate handoff and relevant checks.
-4. End with a concise Gate closing block.
-5. Wait for user confirmation before advancing.
-6. Create a Git milestone commit after verified stage work when appropriate.
+4. Write Gate decisions, artifacts, verification, and risks into handoff with `tools/handoff.py close` when supported.
+5. End with a concise Gate closing block that mirrors the handoff file.
+6. Wait for user confirmation before advancing.
+7. Create a Git milestone commit after verified stage work when appropriate.
 
 The user mainly provides business intent, confirms or rejects Gates, points out mistakes, and decides whether to continue.
 

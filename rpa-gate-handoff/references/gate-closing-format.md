@@ -1,6 +1,13 @@
 # Gate Closing Format
 
-Use this concise format at the end of staged work:
+Before this chat block, persist the same facts into `.rpa_ai/handoff/current.json` when supported:
+
+```powershell
+python tools\handoff.py close --status ready_for_review --decision "输入输出契约已确认" --artifact "docs/examples/input_sync_orders.json" --verification "python tools/handoff.py validate: passed" --risk "需要用户确认进入下一 Gate"
+python tools\handoff.py validate
+```
+
+Then use this concise format at the end of staged work:
 
 ```text
 Gate: contract_review
@@ -17,5 +24,10 @@ Needs your confirmation: 是否按这个契约开始实现？
 - Keep each line short.
 - Prefer concrete file names and commands in `Verified`.
 - Do not hide unverified items.
+- Make the chat block match the handoff fields written by `close`.
 - Do not ask the user to run handoff commands manually unless the agent cannot run them.
 - Do not advance automatically without confirmation.
+
+## Older Templates
+
+If `python tools\handoff.py close` fails because the command is missing, keep the same chat format and briefly state that the project uses an older handoff tool. Use `python tools\handoff.py validate` if available.

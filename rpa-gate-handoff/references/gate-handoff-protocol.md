@@ -34,7 +34,25 @@ Do not ask the user to repeat the handoff command. Only ask if the task cannot b
 
 ## Gate Closing Block
 
-End every stage with:
+Before ending a stage, persist the structured Gate summary into the current handoff when the template supports `close`:
+
+```powershell
+python tools\handoff.py close --status ready_for_review --decision "<decision>" --artifact "<file or artifact>" --verification "<check result>" --risk "<risk or none>"
+python tools\handoff.py validate
+```
+
+Use status values from the template schema: `draft`, `ready_for_review`, `approved`, `blocked`, or `completed`. Newer templates also accept aliases such as `ready`, `verified`, and `delivered`, but the saved handoff should normalize to schema values.
+
+Map closing fields like this:
+
+| Chat line | Handoff field |
+| --- | --- |
+| Completed | `decisions` and `artifacts` |
+| Verified | `verification` |
+| Risks | `risks` |
+| Suggested next | `next_workspace` |
+
+Then end every stage with:
 
 ```text
 Gate: <gate id>
@@ -47,6 +65,8 @@ Needs your confirmation: <yes/no and exact question>
 ```
 
 Use this block even when the work is exploratory. It keeps the user in control without forcing them to remember workflow commands.
+
+If `close` is missing, this is an older template. Continue with the Gate closing block and mention that structured close was not available.
 
 ## Advancing
 

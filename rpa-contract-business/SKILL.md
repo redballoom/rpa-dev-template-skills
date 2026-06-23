@@ -41,6 +41,8 @@ Read these project files:
 8. Add tests and examples.
 9. Run `python -m pytest tests/ -v` when possible.
 
+When closing `contract_review`, use `rpa-gate-handoff` behavior: write decisions, artifacts, verification, and risks with `python tools\handoff.py close` when supported, then show the concise Gate closing block.
+
 ## Contract Draft Format
 
 ```markdown
@@ -99,5 +101,6 @@ Include:
 - Gate closing block:
   - If contract only: `Gate: contract_review`, `Status: ready_for_review`, suggested next `minimal_implementation`.
   - If implementation completed after confirmation: close `minimal_implementation` with tests and suggested next `runtime_verification`.
+  - When `tools\handoff.py close` is available, write the same contract summary into handoff before replying.
 
 Do not advance from `contract_review` to implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".

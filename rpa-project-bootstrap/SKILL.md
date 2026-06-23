@@ -49,8 +49,9 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
    - `handoff_init`
    - `handoff_validate`
 6. If post-init checks were skipped or the template is older, report that clearly.
-7. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
-8. Do not implement business logic during initialization.
+7. When the initialized project supports `tools\handoff.py close`, write the initialized Gate summary into handoff before replying.
+8. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
+9. Do not implement business logic during initialization.
 
 ## Handoff Expectations
 
@@ -89,6 +90,7 @@ Include:
 - Doctor and handoff validation result, if supported by the template.
 - Gate closing block with `initialized` as the current Gate and `contract_review` as the suggested next Gate.
   Use `post_init_checks.handoff_validate.status` as evidence when available.
+  When supported, run `python tools\handoff.py close --status ready_for_review ...` in the initialized project before this block so the handoff file contains the same summary.
 
 Suggested next action for the user:
 

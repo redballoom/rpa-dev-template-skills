@@ -64,7 +64,8 @@ python -m pytest tests/ -v
 
 6. Clean runtime artifacts before final report.
 7. Run `python tools\handoff.py validate` when handoff exists.
-8. If the fix is verified and changes are scoped, create a Git milestone commit unless the user asked not to.
+8. When closing the repair Gate, write the fix decision, changed artifacts, verification, and residual risk with `python tools\handoff.py close` when supported.
+9. If the fix is verified and changes are scoped, create a Git milestone commit unless the user asked not to.
 
 ## Final Report
 
@@ -77,6 +78,7 @@ Include:
 - Expected status after fix.
 - Manual verification needed.
 - Gate closing block with current status, verification, risk, and suggested next action.
+  Write the same summary into handoff first when `tools\handoff.py close` is available.
 
 ## Guardrails
 
