@@ -63,4 +63,4 @@ git@github.com:redballoom/rpa-dev-template.git
 
 ## Install Notes
 
-The exact install command depends on your agent runtime. For Codex-style skill installation, install this repository as a skill source, then verify that the three skill names appear in the available skills list.
+The exact install command depends on your agent runtime. For Codex-style skill installation, install this repository as a skill source, then verify that the skill names appear in the available skills list.
