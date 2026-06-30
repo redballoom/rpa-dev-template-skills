@@ -1,0 +1,20 @@
+{
+  "skill_name": "rpa-gate-handoff",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我在一个 rpa-dev-template 项目里刚完成业务契约整理，想让 AI 不要直接写代码，而是在末尾告诉我当前 Gate、验证结果、风险和是否进入下一步。",
+      "expected_output": "Should use rpa-gate-handoff, write structured Gate facts with tools/handoff.py close when supported, produce a matching Gate closing block, and wait for user confirmation before advancing."
+    },
+    {
+      "id": 2,
+      "prompt": "给我初始化 RPA 项目，项目地址是 C:\\CodePJ\\Demo，项目名称是 Demo。使用模板分支 codex/workflow-productization，初始化完成后告诉我下一步怎么协作。",
+      "expected_output": "Should use rpa-project-bootstrap with --template-ref codex/workflow-productization and gate handoff behavior: run doctor/handoff when available, write initialized Gate summary with tools/handoff.py close when supported, and suggest contract_review."
+    },
+    {
+      "id": 3,
+      "prompt": "这个 runner_abc.json 返回 pending_fix，errors 里 fix_target 是 rpa。请帮我修复。",
+      "expected_output": "Should use rpa-fix-loop, route by fix_target, avoid default Python code changes, write the repair Gate summary with tools/handoff.py close when supported, and close with a matching Gate summary."
+    }
+  ]
+}

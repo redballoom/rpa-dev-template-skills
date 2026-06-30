@@ -1,11 +1,13 @@
 ---
 name: rpa-fix-loop
-description: Diagnose and repair failed runs in projects created from rpa-dev-template. Use when runner_{run_id}.json has pending_fix, fatal, failed, repeated retryable_error, or when the user provides logs, crash_snapshots, Feishu notifications, Linear issues, or asks AI to fix a broken RPA/Python run.
+description: Diagnose and repair failed runs in projects created from rpa-dev-template. Use when runner_{run_id}.json has pending_fix, fatal, failed, repeated retryable_error, or when the user provides logs, crash_snapshots, Feishu notifications, Linear issues, or asks AI to fix a broken RPA/Python run. This skill reads fix_target when available, avoids changing Python for RPA/upstream issues by default, validates handoff, closes the repair Gate, and creates a milestone commit after verified fixes.
 ---
 
 # RPA Failure Fix Loop
 
 Use this skill after a run fails or repeatedly retries.
+
+If `rpa-gate-handoff` is available, use it for Gate closing and milestone behavior.
 
 ## Read First
 
@@ -18,6 +20,7 @@ Read available artifacts:
 - `runner_{run_id}.json`
 - `logs/run_{run_id}.log`
 - `crash_snapshots/crash_{run_id}.json`
+- `.rpa_ai/handoff/current.json` if present
 
 ## Triage By Status
 
@@ -39,6 +42,14 @@ Classify the issue:
 
 Prefer fixing Python only when the failure is reproducible from input files and project code.
 
+When `runner_{run_id}.json.data.errors[].fix_target` exists, use it as the first routing signal:
+
+- `python`: inspect and patch Python code, tests, or docs.
+- `rpa`: explain the ShadowBot/input action needed; do not default to Python code changes.
+- `upstream`: explain the external system, permission, network, or data-source issue; do not default to Python code changes.
+
+If `fix_target` is missing, infer the boundary from evidence and say the confidence level.
+
 ## Repair Steps
 
 1. Inspect runner output, logs, and snapshot.
@@ -52,6 +63,9 @@ python -m pytest tests/ -v
 ```
 
 6. Clean runtime artifacts before final report.
+7. Run `python tools\handoff.py validate` when handoff exists.
+8. When closing the repair Gate, write the fix decision, changed artifacts, verification, and residual risk with `python tools\handoff.py close` when supported.
+9. If the fix is verified and changes are scoped, create a Git milestone commit unless the user asked not to.
 
 ## Final Report
 
@@ -63,6 +77,8 @@ Include:
 - Tests run and result.
 - Expected status after fix.
 - Manual verification needed.
+- Gate closing block with current status, verification, risk, and suggested next action.
+  Write the same summary into handoff first when `tools\handoff.py close` is available.
 
 ## Guardrails
 

@@ -1,11 +1,13 @@
 ---
 name: rpa-project-bootstrap
-description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, and stops before business logic.
+description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, runs doctor/handoff when available, closes the initialized Gate, and stops before business logic.
 ---
 
 # RPA Project Bootstrap
 
-Use this skill to create a new project from the remote RPA Python template. This skill is intentionally portable: do not rely on local absolute paths such as `C:\Users\redballoon\...`.
+Use this skill to create a new project from the remote RPA Python template. This skill is intentionally portable: do not rely on developer-specific absolute paths such as `C:\Users\someone\...`.
+
+If `rpa-gate-handoff` is available, use it for Gate closing behavior. The user should not need to ask you to read or initialize handoff manually.
 
 ## Primary Script
 
@@ -19,7 +21,9 @@ Optional:
 
 ```powershell
 python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
+python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-ref "codex/workflow-productization"
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-git
+python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-post-checks
 python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --force-overwrite
 ```
 
@@ -35,12 +39,19 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
    - `project_name`
    - `target_dir`
    - `template_url`, default `https://github.com/redballoom/rpa-dev-template.git`
+   - `template_ref` if the user asks for a branch, tag, v2, workflow-enhanced template, or experimental template
    - whether to initialize Git
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
 4. Read the final JSON result.
-5. Report initialized path, missing handoff files, and commit hash.
-6. Do not implement business logic during initialization.
+5. Read `post_init_checks` from the script result:
+   - `doctor`
+   - `handoff_init`
+   - `handoff_validate`
+6. If post-init checks were skipped or the template is older, report that clearly.
+7. When the initialized project supports `tools\handoff.py close`, write the initialized Gate summary into handoff before replying.
+8. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
+9. Do not implement business logic during initialization.
 
 ## Handoff Expectations
 
@@ -71,16 +82,20 @@ If tests cannot run, report why and give the exact command for later.
 Include:
 
 - Project path.
+- Template URL and template ref, if one was used.
 - Initial commit hash, if Git was initialized.
 - Whether `project.json` was generated and sanitized.
 - Missing handoff files, if any.
 - Test result, if run.
-- Next prompt for business contract design.
+- Doctor and handoff validation result, if supported by the template.
+- Gate closing block with `initialized` as the current Gate and `contract_review` as the suggested next Gate.
+  Use `post_init_checks.handoff_validate.status` as evidence when available.
+  When supported, run `python tools\handoff.py close --status ready_for_review ...` in the initialized project before this block so the handoff file contains the same summary.
 
-Suggested next prompt:
+Suggested next action for the user:
 
 ```text
-阅读 AGENTS.md、README.md、docs/OPERATION_GUIDE.md 和 docs/SHADOWBOT_INPUT_CONTRACT.md。根据我的业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，不要先写 handler。等我确认契约后，再实现代码、示例和测试。
+确认是否进入 contract_review。进入后，根据业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，不要先写 handler。
 ```
 
 ## Guardrails
