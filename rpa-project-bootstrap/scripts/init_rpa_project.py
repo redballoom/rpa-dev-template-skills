@@ -20,8 +20,10 @@ DEFAULT_TEMPLATE_URL = "https://github.com/redballoom/rpa-dev-template.git"
 
 TEXT_SUFFIXES = {".bat", ".cmd", ".json", ".md", ".py", ".txt", ".ini", ".yaml", ".yml"}
 IGNORE_DIRS = {".git", "__pycache__", ".pytest_cache", "logs", "crash_snapshots", "data"}
-IGNORE_FILES = {".runner.lock", "input.json"}
-IGNORE_PATTERNS = ["*.pyc", "runner_*.json", "input_*.json"]
+IGNORE_FILES = {".runner.lock"}
+IGNORE_PATTERNS = ["*.pyc"]
+ROOT_RUNTIME_FILES = {"input.json"}
+ROOT_RUNTIME_PATTERNS = ["runner_*.json", "input_*.json"]
 SECRET_KEYS = {"api_key", "app_secret", "app_token", "feishu_webhook", "webhook", "token", "password", "secret"}
 
 
@@ -59,19 +61,30 @@ def ensure_empty_or_missing(path: Path, force_overwrite: bool = False) -> None:
         raise RuntimeError("target directory is not empty: %s" % path)
 
 
-def should_ignore(src: Path) -> bool:
+def should_ignore(src: Path, root: Path | None = None) -> bool:
     name = src.name
     if src.is_dir() and name in IGNORE_DIRS:
         return True
     if src.is_file() and name in IGNORE_FILES:
         return True
-    return any(fnmatch.fnmatch(name, pat) for pat in IGNORE_PATTERNS)
+    if any(fnmatch.fnmatch(name, pat) for pat in IGNORE_PATTERNS):
+        return True
+    if root and src.is_file():
+        try:
+            rel = src.relative_to(root)
+        except ValueError:
+            rel = src
+        if len(rel.parts) == 1:
+            if name in ROOT_RUNTIME_FILES:
+                return True
+            return any(fnmatch.fnmatch(name, pat) for pat in ROOT_RUNTIME_PATTERNS)
+    return False
 
 
 def copy_template(src_root: Path, dst_root: Path) -> None:
     dst_root.mkdir(parents=True, exist_ok=True)
     for src in src_root.iterdir():
-        if should_ignore(src):
+        if should_ignore(src, src_root):
             continue
         dst = dst_root / src.name
         if src.is_dir():
@@ -79,7 +92,7 @@ def copy_template(src_root: Path, dst_root: Path) -> None:
                 src,
                 dst,
                 dirs_exist_ok=True,
-                ignore=lambda directory, names: [n for n in names if should_ignore(Path(directory) / n)],
+                ignore=lambda directory, names: [n for n in names if should_ignore(Path(directory) / n, src_root)],
             )
         else:
             shutil.copy2(src, dst)
@@ -106,7 +119,7 @@ def replace_project_name(root: Path, project_name: str) -> int:
         text = read_text(path)
         if text is None:
             continue
-        new_text = text.replace("开发模板", project_name).replace("rpa-dev-template", project_name)
+        new_text = text.replace("开发模板", project_name)
         if new_text != text:
             write_text(path, new_text)
             changed += 1
