@@ -27,10 +27,37 @@ ROOT_RUNTIME_PATTERNS = ["runner_*.json", "input_*.json"]
 SECRET_KEYS = {"api_key", "app_secret", "app_token", "feishu_webhook", "webhook", "token", "password", "secret"}
 
 
+def configure_utf8_stdio() -> None:
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, OSError, ValueError):
+            continue
+
+
+def child_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
+def print_json(data: dict[str, Any], stream: Any = None) -> None:
+    target = stream if stream is not None else sys.stdout
+    try:
+        print(json.dumps(data, ensure_ascii=False, indent=2), file=target)
+    except UnicodeEncodeError:
+        print(json.dumps(data, ensure_ascii=True, indent=2), file=target)
+
+
 def run(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
     proc = subprocess.run(
         cmd,
         cwd=str(cwd) if cwd else None,
+        env=child_env(),
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -236,6 +263,7 @@ def run_post_init_checks(root: Path) -> dict[str, Any]:
 
 
 def main() -> int:
+    configure_utf8_stdio()
     parser = argparse.ArgumentParser(description="Initialize an RPA Python project from rpa-dev-template")
     parser.add_argument("--name", required=True, help="Project name, Chinese allowed")
     parser.add_argument("--target", default=os.getcwd(), help="Final target project directory")
@@ -281,11 +309,11 @@ def main() -> int:
         if not args.skip_git:
             result["git_commit"] = init_git(target, project_name)
         result["status"] = "success"
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print_json(result)
         return 0
     except Exception as exc:
         result["error"] = str(exc)
-        print(json.dumps(result, ensure_ascii=False, indent=2), file=sys.stderr)
+        print_json(result, stream=sys.stderr)
         return 1
     finally:
         if tmp_dir and tmp_dir.exists() and not args.keep_temp:

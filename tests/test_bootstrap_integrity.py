@@ -1,4 +1,6 @@
+import io
 import importlib.util
+import subprocess
 from pathlib import Path
 
 
@@ -62,3 +64,33 @@ def test_replace_project_name_preserves_canonical_repositories(tmp_path):
     assert "https://github.com/redballoom/rpa-dev-template-skills" in text
     assert "https://github.com/redballoom/rpa-dev-template/schemas/input.schema.json" in text
     assert "客户项目-skills" not in text
+
+
+def test_run_forces_utf8_for_python_child_processes(monkeypatch):
+    module = load_bootstrap_module()
+    captured = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(cmd, 0, stdout="中文路径", stderr="")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+
+    proc = module.run(["python", "-c", "print('ok')"])
+
+    assert proc.stdout == "中文路径"
+    assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+    assert captured["env"]["PYTHONUTF8"] == "1"
+
+
+def test_print_json_falls_back_to_ascii_for_legacy_console():
+    module = load_bootstrap_module()
+    buffer = io.BytesIO()
+    stream = io.TextIOWrapper(buffer, encoding="ascii", errors="strict")
+
+    module.print_json({"project_path": "D:\\人机协作\\测试项目"}, stream=stream)
+    stream.flush()
+
+    output = buffer.getvalue().decode("ascii")
+    assert "\\u4eba\\u673a\\u534f\\u4f5c" in output
+    assert "\\u6d4b\\u8bd5\\u9879\\u76ee" in output
