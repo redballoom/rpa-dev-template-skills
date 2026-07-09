@@ -19,7 +19,7 @@ These skills are designed to work on any machine where the agent can access Git,
 2. Ask the agent to initialize a project:
 
 ```text
-给我初始化 RPA 项目，项目地址是 C:\CodePJ\Demo，项目名称是 Demo
+给我初始化 RPA 项目，项目地址是当前目录下的 .\Demo，项目名称是 Demo
 ```
 
 3. Discuss the business requirement with the agent.

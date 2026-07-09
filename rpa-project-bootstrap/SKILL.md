@@ -14,18 +14,20 @@ If `rpa-gate-handoff` is available, use it for Gate closing behavior. The user s
 Use the bundled script by resolving it relative to this skill directory:
 
 ```powershell
-python scripts/init_rpa_project.py --name "项目名" --target "C:\CodePJ\项目名"
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名"
 ```
 
 Optional:
 
 ```powershell
-python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
-python scripts/init_rpa_project.py --name "项目名" --target "D:\RPA\项目名" --template-ref "codex/workflow-productization"
-python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-git
-python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --skip-post-checks
-python scripts/init_rpa_project.py --name "项目名" --target "C:\tmp\项目名" --force-overwrite
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名" --template-url "https://github.com/redballoom/rpa-dev-template.git"
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名" --template-ref "codex/workflow-productization"
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名" --skip-git
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名" --skip-post-checks
+python scripts/init_rpa_project.py --name "项目名" --target ".\项目名" --force-overwrite
 ```
+
+These are examples only. Always prefer the target directory explicitly provided by the user.
 
 If the current agent cannot run relative paths from the skill directory, locate the current `SKILL.md` directory first and run:
 
