@@ -1,6 +1,6 @@
 ---
 name: rpa-contract-business
-description: Drive contract-first business implementation for projects created from rpa-dev-template. Use whenever the user brings a new RPA business requirement, asks what ShadowBot should provide, asks AI to write business logic, or needs tasks[].type/payload/output/status design before implementation. This skill should trigger before coding handlers, initialize or validate contract_review handoff when available, close the Gate with a concise summary, and wait for user confirmation before implementation.
+description: Drive contract-first business implementation for projects created from rpa-dev-template. Use whenever the user brings a new RPA business requirement, asks what ShadowBot should provide, asks AI to write business logic, or needs tasks[].type/payload/output/status design before implementation. This skill should trigger before coding handlers, produce a concise contract summary, and wait for user confirmation before implementation.
 ---
 
 # RPA Contract-First Business Implementation
@@ -8,8 +8,6 @@ description: Drive contract-first business implementation for projects created f
 Use this skill when a business requirement arrives in an initialized RPA Python project.
 
 The first deliverable is not code. The first deliverable is a confirmed contract.
-
-If `rpa-gate-handoff` is available, use it. The user should not need to repeat handoff commands.
 
 ## Read First
 
@@ -22,26 +20,19 @@ Read these project files:
 - `docs/RPA_PYTHON_BOUNDARY.md`
 - `docs/REQUIREMENT_TEMPLATE.md`
 - relevant `docs/examples/input_*.json`
-- `.rpa_ai/workflow.template.json` and `.rpa_ai/handoff/current.json` if present
 
 ## Workflow
 
-1. Ensure the current Gate is `contract_review` when handoff tooling exists:
-   - If no handoff exists, run `python tools\handoff.py init --workspace contract_review`.
-   - Run `python tools\handoff.py validate` when possible.
-2. Understand the business goal and what ShadowBot already does.
-3. Split responsibilities:
+1. Understand the business goal and what ShadowBot already does.
+2. Split responsibilities:
    - ShadowBot: UI, login, download, upload, manual confirmation, calling `run.bat`.
    - Python: deterministic data processing, validation, file output, structured status.
    - AI: Python code, tests, examples, docs.
-4. Draft the contract before coding.
-5. Wait for user confirmation before handler implementation.
-6. After confirmation, advance handoff to `minimal_implementation` when possible.
-7. Implement handler only after the contract is clear.
-8. Add tests and examples.
-9. Run `python -m pytest tests/ -v` when possible.
-
-When closing `contract_review`, use `rpa-gate-handoff` behavior: write decisions, artifacts, verification, and risks with `python tools\handoff.py close` when supported, then show the concise Gate closing block.
+3. Draft the contract before coding.
+4. Wait for user confirmation before handler implementation.
+5. Implement handler only after the contract is clear.
+6. Add tests and examples.
+7. Run `python -m pytest tests/ -v` when possible.
 
 ## Contract Draft Format
 
@@ -98,9 +89,6 @@ Include:
 - Expected `runner_{run_id}.json.status`.
 - Test command and result.
 - Remaining manual checks.
-- Gate closing block:
-  - If contract only: `Gate: contract_review`, `Status: ready_for_review`, suggested next `minimal_implementation`.
-  - If implementation completed after confirmation: close `minimal_implementation` with tests and suggested next `runtime_verification`.
-  - When `tools\handoff.py close` is available, write the same contract summary into handoff before replying.
+- Whether the contract is awaiting confirmation or implementation is complete.
 
-Do not advance from `contract_review` to implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
+Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".

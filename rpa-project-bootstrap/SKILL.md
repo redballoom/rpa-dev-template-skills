@@ -1,13 +1,11 @@
 ---
 name: rpa-project-bootstrap
-description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates handoff docs, initializes Git when requested, runs doctor/handoff when available, closes the initialized Gate, and stops before business logic.
+description: Initialize a new RPA Python project from the remote rpa-dev-template on any machine. Use when the user says to create, initialize, clone, scaffold, reset, or prepare an RPA project with a project name and target directory. This skill clones the template, aligns project identity, generates sanitized project.json, validates core template files, initializes Git when requested, runs the template doctor when available, and stops before business logic.
 ---
 
 # RPA Project Bootstrap
 
 Use this skill to create a new project from the remote RPA Python template. This skill is intentionally portable: do not rely on developer-specific absolute paths such as `C:\Users\someone\...`.
-
-If `rpa-gate-handoff` is available, use it for Gate closing behavior. The user should not need to ask you to read or initialize handoff manually.
 
 ## Primary Script
 
@@ -48,14 +46,11 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 4. Read the final JSON result.
 5. Read `post_init_checks` from the script result:
    - `doctor`
-   - `handoff_init`
-   - `handoff_validate`
 6. If post-init checks were skipped or the template is older, report that clearly.
-7. When the initialized project supports `tools\handoff.py close`, write the initialized Gate summary into handoff before replying.
-8. Report initialized path, missing handoff files, commit hash, doctor result, and handoff result.
-9. Do not implement business logic during initialization.
+7. Report initialized path, missing template files, commit hash, and doctor result.
+8. Do not implement business logic during initialization.
 
-## Handoff Expectations
+## Template Expectations
 
 The initialized project should include:
 
@@ -87,17 +82,14 @@ Include:
 - Template URL and template ref, if one was used.
 - Initial commit hash, if Git was initialized.
 - Whether `project.json` was generated and sanitized.
-- Missing handoff files, if any.
+- Missing template files, if any.
 - Test result, if run.
-- Doctor and handoff validation result, if supported by the template.
-- Gate closing block with `initialized` as the current Gate and `contract_review` as the suggested next Gate.
-  Use `post_init_checks.handoff_validate.status` as evidence when available.
-  When supported, run `python tools\handoff.py close --status ready_for_review ...` in the initialized project before this block so the handoff file contains the same summary.
+- Doctor result, if supported by the template.
 
 Suggested next action for the user:
 
 ```text
-确认是否进入 contract_review。进入后，根据业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，不要先写 handler。
+根据业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，确认调用契约后再写 handler。
 ```
 
 ## Guardrails

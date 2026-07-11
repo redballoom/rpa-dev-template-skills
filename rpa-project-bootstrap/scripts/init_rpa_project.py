@@ -203,7 +203,7 @@ def update_run_bat(root: Path, project_name: str) -> None:
         path.write_text("\r\n".join(lines) + "\r\n", encoding="utf-8", newline="")
 
 
-def validate_handoff_files(root: Path) -> list[str]:
+def validate_template_files(root: Path) -> list[str]:
     required = [
         "AGENTS.md",
         "README.md",
@@ -250,15 +250,8 @@ def run_optional_python_tool(root: Path, args: list[str]) -> dict[str, Any]:
 
 def run_post_init_checks(root: Path) -> dict[str, Any]:
     doctor = run_optional_python_tool(root, ["tools/doctor.py"])
-    handoff_init = run_optional_python_tool(
-        root,
-        ["tools/handoff.py", "init", "--workspace", "initialized", "--project-path", str(root)],
-    )
-    handoff_validate = run_optional_python_tool(root, ["tools/handoff.py", "validate"])
     return {
         "doctor": doctor,
-        "handoff_init": handoff_init,
-        "handoff_validate": handoff_validate,
     }
 
 
@@ -270,7 +263,7 @@ def main() -> int:
     parser.add_argument("--template-url", default=DEFAULT_TEMPLATE_URL, help="Remote template Git URL")
     parser.add_argument("--template-ref", default="", help="Template branch or tag to clone, for example v2.0.0")
     parser.add_argument("--skip-git", action="store_true", help="Do not initialize Git")
-    parser.add_argument("--skip-post-checks", action="store_true", help="Do not run template doctor/handoff checks")
+    parser.add_argument("--skip-post-checks", action="store_true", help="Do not run the template doctor check")
     parser.add_argument("--force-overwrite", action="store_true", help="Allow copying into a non-empty target directory")
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary clone directory for debugging")
     args = parser.parse_args()
@@ -289,7 +282,7 @@ def main() -> int:
         "target": str(target),
         "template_url": args.template_url,
         "template_ref": args.template_ref,
-        "missing_handoff_files": [],
+        "missing_template_files": [],
         "git_commit": "",
         "post_init_checks": {},
     }
@@ -302,8 +295,8 @@ def main() -> int:
         replace_project_name(target, project_name)
         update_project_json(target, project_name)
         update_run_bat(target, project_name)
-        missing = validate_handoff_files(target)
-        result["missing_handoff_files"] = missing
+        missing = validate_template_files(target)
+        result["missing_template_files"] = missing
         if not args.skip_post_checks:
             result["post_init_checks"] = run_post_init_checks(target)
         if not args.skip_git:
