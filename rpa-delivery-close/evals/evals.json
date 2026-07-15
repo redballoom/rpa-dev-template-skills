@@ -1,0 +1,41 @@
+{
+  "skill_name": "rpa-delivery-close",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "这个RPA项目刚完成G3开发验证，测试和dry-run都通过了，但没有飞书Base。请记录本地进度并准备让我验收。",
+      "expected_output": "Agent读取Trellis证据，先报告G3结果并请求验收；确认后使用本地进度脚本记录Trellis，不要求Base链接。",
+      "files": [],
+      "expectations": [
+        "The response does not require a Base link for local closure.",
+        "The response asks for G3 acceptance before advancing the Gate.",
+        "The response names task.json.meta.progress and progress.md as local records.",
+        "The response does not claim files were written when no project files were provided."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "真实联调因为上游IP白名单失败了，代码不需要改。把当前进度记录下来，下一步责任人是外部系统管理员。",
+      "expected_output": "Agent保持G4不变，记录blocked=true、外部责任方、阻塞原因和runner证据，不错误推进Gate。",
+      "files": [],
+      "expectations": [
+        "The response keeps the current Gate at G4 rather than advancing it.",
+        "The response records an independent blocker and external next owner.",
+        "The response does not recommend changing Python without code evidence.",
+        "The response requests or references runner evidence without inventing a successful run."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "业务验收通过了，请完成Stage H。项目配置了管理Base，也要同步。",
+      "expected_output": "Agent先校准并写回本地Trellis事实，再按用户授权同步Base，最后校验Git、runner、业务验收和归档一致。",
+      "files": [],
+      "expectations": [
+        "The response calibrates local Trellis progress before Base projection.",
+        "The response checks Git, tests, runner, ShadowBot/business acceptance, and archive evidence.",
+        "The response requires actual Base context before claiming synchronization.",
+        "The response does not claim Stage H is complete when no project evidence was provided."
+      ]
+    }
+  ]
+}
