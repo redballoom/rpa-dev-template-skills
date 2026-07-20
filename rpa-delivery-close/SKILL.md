@@ -98,6 +98,8 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
 
 `status` and `suggest` are read-only. Use them at the start of a new session, before a Gate transition, before final delivery, and whenever chat history and local files may disagree. Treat the result as a fact check, not as automatic permission to advance. If the CLI reports lifecycle drift, use an explicit `recovery` calibration after explaining the evidence; do not invent missing historical Gate closes.
 
+When Trellis has its own setup task such as `00-bootstrap-guidelines`, the guard CLI should prefer the only active task with `task.json.meta.progress.current_gate`. Pass `--task` only when more than one delivery task has local progress.
+
 For a project that has already been created by `rpa-project-bootstrap` but has not entered local collaboration tracking, use the collaboration bootstrap wrapper:
 
 ```powershell

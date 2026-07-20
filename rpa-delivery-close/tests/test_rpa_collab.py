@@ -49,6 +49,23 @@ def write_task(task_dir: Path, *, status="in_progress", gate="G2", next_owner="a
     return task_dir
 
 
+def write_system_task_without_progress(task_dir: Path):
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task.json").write_text(
+        json.dumps(
+            {
+                "id": task_dir.name,
+                "name": task_dir.name,
+                "status": "in_progress",
+                "meta": {},
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def write_full_trellis_workspace(project_root: Path):
     spec_dir = project_root / ".trellis" / "spec"
     spec_dir.mkdir(parents=True, exist_ok=True)
@@ -118,6 +135,13 @@ class RpaCollabTests(unittest.TestCase):
         self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
         self.assertEqual(result["progress"]["current_gate"], "G3")
         self.assertEqual(result["warnings"], [])
+
+    def test_status_prefers_only_active_task_with_progress_gate(self):
+        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
+        task_dir = write_task(self.tasks_root / "07-20-demo", gate="G0")
+        result = MODULE.build_status(self.project_root)
+        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
+        self.assertEqual(result["task_id"], "demo")
 
     def test_suggest_recovery_when_completed_task_has_active_owner(self):
         write_task(self.tasks_root / "07-20-demo", status="completed", gate="G5", next_owner="user")

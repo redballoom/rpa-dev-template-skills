@@ -165,6 +165,16 @@ def find_task_files(project_root: Path) -> list[Path]:
     return sorted(tasks_root.rglob("task.json"))
 
 
+def has_progress_gate(task_data: dict[str, Any]) -> bool:
+    meta = task_data.get("meta")
+    if not isinstance(meta, dict):
+        return False
+    progress = meta.get("progress")
+    if not isinstance(progress, dict):
+        return False
+    return progress.get("current_gate") in GATES
+
+
 def match_task(project_root: Path, task_input: str | None) -> tuple[Path, dict[str, Any]]:
     task_files = find_task_files(project_root)
     if not task_files:
@@ -200,7 +210,12 @@ def match_task(project_root: Path, task_input: str | None) -> tuple[Path, dict[s
     if len(active) == 1:
         return active[0]
     if len(active) > 1:
-        raise CollabError("Multiple active Trellis tasks found; pass --task explicitly")
+        progress_tasks = [(path, data) for path, data in active if has_progress_gate(data)]
+        if len(progress_tasks) == 1:
+            return progress_tasks[0]
+        if len(progress_tasks) > 1:
+            raise CollabError("Multiple active Trellis tasks have local progress; pass --task explicitly")
+        raise CollabError("Multiple active Trellis tasks found and none has local progress; pass --task explicitly")
 
     non_archived = [(path, read_json(path)) for path in task_files if not is_archive_path(path, tasks_root)]
     if len(non_archived) == 1:
