@@ -35,7 +35,7 @@ Read current evidence when present or provided by the user:
 
 If `.rpa_ai/handoff/current.json` exists, treat it as legacy context only. Do not use it as the lifecycle authority for new harness-independent projects unless the user explicitly says this is a legacy Gate/handoff project.
 
-## Three Modes
+## Four Modes
 
 Use checkpoint mode when meaningful work has progressed but the Gate is not ready to close, when work becomes blocked, when the next owner changes, or before ending an unfinished session.
 
@@ -53,7 +53,9 @@ Examples:
 
 Use final delivery mode when the user says business acceptance passed, asks to archive, or asks to complete Stage H.
 
-Checkpoint mode updates the current local snapshot and appends one task-local checkpoint. Gate close mode asks for acceptance, then records one accepted local checkpoint and advances the Gate. Final delivery mode calibrates all evidence groups before archive. Base synchronization is optional in every mode.
+Use recovery mode when local progress is missing or conflicts with verified Trellis, Git, runner, or archive facts. Recovery records the correction explicitly instead of fabricating skipped Gate closes.
+
+Checkpoint mode updates the current local snapshot and appends one task-local checkpoint. Gate close mode asks for acceptance, then records one accepted local checkpoint and advances the Gate. Recovery mode calibrates stale facts with an explicit history entry. Final delivery mode calibrates all evidence groups before archive. Base synchronization is optional in every mode.
 
 ## Mandatory Gate Close Prompt
 
@@ -98,6 +100,29 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
 
 `status` and `suggest` are read-only. Use them at the start of a new session, before a Gate transition, before final delivery, and whenever chat history and local files may disagree. Treat the result as a fact check, not as automatic permission to advance. If the CLI reports lifecycle drift, use an explicit `recovery` calibration after explaining the evidence; do not invent missing historical Gate closes.
 
+Use the guard CLI for normal Gate-local checkpoints so task selection and write-back use the same resolved delivery task:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> checkpoint `
+  --current-work "实现业务handler" `
+  --latest-checkpoint "相关测试通过" `
+  --next-action "执行runner dry-run" `
+  --next-owner agent `
+  --evidence "tests/test_handler.py"
+```
+
+Use `recovery` for an explicit historical calibration, including completed or archived tasks:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> recovery `
+  --gate G5 `
+  --current-work "历史交付状态校准" `
+  --latest-checkpoint "归档项目已无后续本地动作" `
+  --next-action "无后续本地动作" `
+  --next-owner none `
+  --evidence "commit:abc1234"
+```
+
 When Trellis has its own setup task such as `00-bootstrap-guidelines`, the guard CLI should prefer the only active task with `task.json.meta.progress.current_gate`. Pass `--task` only when more than one delivery task has local progress.
 
 For a project that has already been created by `rpa-project-bootstrap` but has not entered local collaboration tracking, use the collaboration bootstrap wrapper:
@@ -119,7 +144,7 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> bootstrap
 
 This command creates or recognizes one delivery task, writes the initial local progress snapshot only when missing, and reads back `status` / `suggest`. It is intentionally idempotent: if `task.json.meta.progress` already exists, preserve it instead of overwriting the current Gate.
 
-Use the bundled script for deterministic writes:
+Use the bundled writer directly only when diagnosing the guard CLI or maintaining low-level integrations:
 
 ```powershell
 python <skill-dir>\scripts\update_trellis_progress.py `

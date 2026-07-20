@@ -92,3 +92,14 @@ Include:
 - Whether the contract is awaiting confirmation or implementation is complete.
 
 Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
+
+## Progress Handoff
+
+After explicit contract confirmation, hand off to `rpa-delivery-close` before implementation:
+
+1. Run `status` / `suggest` against the local Trellis delivery task.
+2. If the saved Gate is G2, present the contract evidence and record the accepted G2 Gate through `gate-close` after the user confirms it should be recorded.
+3. If the saved Gate differs from the conversation, use a checkpoint or explicit recovery instead of forcing G2 closed.
+4. Start implementation only after the local progress write succeeds and reads back at G3.
+
+This handoff keeps contract approval, implementation permission, and the durable project state aligned without making Base a dependency.

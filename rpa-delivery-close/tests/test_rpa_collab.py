@@ -215,10 +215,67 @@ class RpaCollabTests(unittest.TestCase):
         history = (self.tasks_root / "07-20-demo" / "progress.md").read_text(encoding="utf-8")
         self.assertIn("Accepted Gate: `G2`", history)
 
+    def test_gate_close_writes_status_selected_delivery_task(self):
+        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
+        task_dir = write_task(self.tasks_root / "07-20-demo", gate="G2")
+        result = MODULE.close_gate(make_write_args(self.project_root))
+        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
+        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G3")
+
     def test_gate_close_rejects_stale_acceptance(self):
         write_task(self.tasks_root / "07-20-demo", gate="G3")
         with self.assertRaises(MODULE.CollabError):
             MODULE.close_gate(make_write_args(self.project_root, accepted_gate="G2"))
+
+    def test_checkpoint_keeps_saved_gate_and_reads_back(self):
+        write_task(self.tasks_root / "07-20-demo", gate="G3")
+        args = make_write_args(
+            self.project_root,
+            current_work="Implementation in progress",
+            latest_checkpoint="Unit tests pass",
+            next_action="Run dry-run",
+            checkpoint_id="cp-g3-progress",
+        )
+        result = MODULE.record_checkpoint(args)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["progress"]["current_gate"], "G3")
+        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G3")
+
+    def test_checkpoint_records_blocker_and_owner(self):
+        write_task(self.tasks_root / "07-20-demo", gate="G4")
+        args = make_write_args(
+            self.project_root,
+            current_work="Waiting for ShadowBot integration",
+            latest_checkpoint="Python runner is ready",
+            next_action="Provide a real integration run",
+            next_owner="user",
+            blocked=True,
+            block_reason="ShadowBot must be operated by the user",
+            checkpoint_id="cp-g4-blocked",
+        )
+        result = MODULE.record_checkpoint(args)
+        progress = result["read_back"]["progress"]
+        self.assertEqual(progress["current_gate"], "G4")
+        self.assertTrue(progress["blocked"])
+        self.assertEqual(progress["next_owner"], "user")
+
+    def test_recovery_calibrates_archived_g5_progress(self):
+        write_task(self.tasks_root, status="completed", gate="G5", next_owner="user", archived=True)
+        args = make_write_args(
+            self.project_root,
+            gate="G5",
+            current_work="Historical delivery calibrated",
+            latest_checkpoint="Archived delivery has no remaining action",
+            next_action="No further local action",
+            next_owner="none",
+            checkpoint_id="cp-g5-recovery",
+        )
+        result = MODULE.recover_progress(args)
+        self.assertTrue(result["read_back"]["archived"])
+        self.assertEqual(result["read_back"]["progress"]["next_owner"], "none")
+        warning_codes = {warning["code"] for warning in result["read_back"]["warnings"]}
+        self.assertNotIn("lifecycle_drift", warning_codes)
+        self.assertNotIn("archive_drift", warning_codes)
 
     def test_finish_aligns_g5_progress_and_completed_status(self):
         write_task(self.tasks_root / "07-20-demo", gate="G5")

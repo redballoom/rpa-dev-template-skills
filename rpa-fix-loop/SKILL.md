@@ -79,3 +79,14 @@ Include:
 - Do not mask `SystemException` as success.
 - Do not change `runner.py` output protocol without explicit agreement.
 - Do not push or merge without explicit user approval.
+
+## Progress Handoff
+
+When the diagnosis reaches a meaningful result, hand off to `rpa-delivery-close`:
+
+- Record a `checkpoint` at the saved current Gate when a fix is implemented, verification is pending, the project is blocked, or the next owner changes.
+- Include the runner status, failure boundary, test result, residual risk, and next owner as evidence or checkpoint context.
+- Keep the Gate unchanged unless the user separately accepts that Gate; a successful repair is not automatic Gate acceptance.
+- If local files and the saved progress disagree, use an explicit `recovery` entry rather than rewriting history.
+
+Read back the Trellis snapshot before reporting the fix-loop handoff as recorded.

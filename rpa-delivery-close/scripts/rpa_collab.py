@@ -452,10 +452,16 @@ def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def update_with_writer(args: argparse.Namespace, kind: str, gate: str, accepted_gate: str | None = None) -> dict[str, Any]:
+def update_with_writer(
+    args: argparse.Namespace,
+    kind: str,
+    gate: str,
+    accepted_gate: str | None = None,
+    task: str | None = None,
+) -> dict[str, Any]:
     writer_args = argparse.Namespace(
         project_root=str(Path(args.project_root).resolve()),
-        task=args.task,
+        task=task or args.task,
         kind=kind,
         gate=gate,
         accepted_gate=accepted_gate,
@@ -473,6 +479,29 @@ def update_with_writer(args: argparse.Namespace, kind: str, gate: str, accepted_
     return progress_writer.update_progress(writer_args)
 
 
+def selected_task(status: dict[str, Any]) -> str:
+    return str(Path(status["task_file"]).parent)
+
+
+def record_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
+    status = build_status(Path(args.project_root), args.task)
+    progress = status.get("progress") or {}
+    current_gate = progress.get("current_gate")
+    if current_gate not in GATES:
+        raise CollabError("checkpoint requires an existing local Gate; use bootstrap or recovery first")
+
+    result = update_with_writer(args, "checkpoint", current_gate, task=selected_task(status))
+    result["read_back"] = build_status(Path(args.project_root), selected_task(status))
+    return result
+
+
+def recover_progress(args: argparse.Namespace) -> dict[str, Any]:
+    status = build_status(Path(args.project_root), args.task)
+    result = update_with_writer(args, "recovery", args.gate, task=selected_task(status))
+    result["read_back"] = build_status(Path(args.project_root), selected_task(status))
+    return result
+
+
 def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     status = build_status(Path(args.project_root), args.task)
     progress = status.get("progress") or {}
@@ -480,8 +509,9 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if current_gate != args.accepted_gate:
         raise CollabError(f"Saved current_gate is {current_gate}; cannot accept {args.accepted_gate}")
     next_gate = args.gate or NEXT_GATE[args.accepted_gate]
-    result = update_with_writer(args, "gate_close", next_gate, args.accepted_gate)
-    result["read_back"] = build_status(Path(args.project_root), args.task)
+    task = selected_task(status)
+    result = update_with_writer(args, "gate_close", next_gate, args.accepted_gate, task=task)
+    result["read_back"] = build_status(Path(args.project_root), task)
     return result
 
 
@@ -495,7 +525,8 @@ def finish(args: argparse.Namespace) -> dict[str, Any]:
 
     args.gate = "G5"
     args.next_owner = "none"
-    result = update_with_writer(args, "checkpoint", "G5")
+    task = selected_task(status)
+    result = update_with_writer(args, "checkpoint", "G5", task=task)
 
     if not args.dry_run:
         task_file = Path(result["task_file"])
@@ -504,7 +535,7 @@ def finish(args: argparse.Namespace) -> dict[str, Any]:
         task_data.setdefault("completedAt", date.today().isoformat())
         write_json_atomic(task_file, task_data)
 
-    read_back = build_status(Path(args.project_root), args.task)
+    read_back = build_status(Path(args.project_root), task)
     drift_codes = {warning["code"] for warning in read_back.get("warnings", [])}
     if drift_codes.intersection({"lifecycle_drift", "completed_before_g5"}):
         raise CollabError(f"finish read-back still has lifecycle drift: {sorted(drift_codes)}")
@@ -553,6 +584,9 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap_parser.add_argument("--timestamp")
     bootstrap_parser.add_argument("--dry-run", action="store_true")
 
+    checkpoint_parser = subparsers.add_parser("checkpoint", help="Record progress without changing the saved Gate")
+    add_progress_args(checkpoint_parser)
+
     gate_close = subparsers.add_parser("gate-close", help="Close the saved current Gate after user acceptance")
     gate_close.add_argument("--accepted-gate", choices=GATES, required=True)
     gate_close.add_argument("--gate", choices=GATES, help="Resulting current Gate; defaults to the next Gate")
@@ -560,6 +594,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     finish_parser = subparsers.add_parser("finish", help="Finalize G5 progress and mark the Trellis task completed")
     add_progress_args(finish_parser)
+
+    recovery_parser = subparsers.add_parser("recovery", help="Calibrate stale or missing progress explicitly")
+    recovery_parser.add_argument("--gate", choices=GATES, required=True)
+    add_progress_args(recovery_parser)
     return parser
 
 
@@ -587,8 +625,12 @@ def main(argv: list[str] | None = None) -> int:
             print_json({"status": status, "suggestion": suggest_action(status)})
         elif args.command == "bootstrap":
             print_json(bootstrap_collaboration(args))
+        elif args.command == "checkpoint":
+            print_json(record_checkpoint(args))
         elif args.command == "gate-close":
             print_json(close_gate(args))
+        elif args.command == "recovery":
+            print_json(recover_progress(args))
         elif args.command == "finish":
             print_json(finish(args))
         else:
