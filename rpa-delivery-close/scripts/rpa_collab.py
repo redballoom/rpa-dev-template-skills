@@ -207,14 +207,26 @@ def match_task(project_root: Path, task_input: str | None) -> tuple[Path, dict[s
         task_data = read_json(task_file)
         if task_data.get("status") != "completed":
             active.append((task_file, task_data))
+
+    active_progress = [(path, data) for path, data in active if has_progress_gate(data)]
+    if len(active_progress) == 1:
+        return active_progress[0]
+    if len(active_progress) > 1:
+        raise CollabError("Multiple active Trellis tasks have local progress; pass --task explicitly")
+
+    progress_tasks: list[tuple[Path, dict[str, Any]]] = []
+    for task_file in task_files:
+        task_data = read_json(task_file)
+        if has_progress_gate(task_data):
+            progress_tasks.append((task_file, task_data))
+    if len(progress_tasks) == 1:
+        return progress_tasks[0]
+    if len(progress_tasks) > 1:
+        raise CollabError("Multiple Trellis tasks have local progress; pass --task explicitly")
+
     if len(active) == 1:
         return active[0]
     if len(active) > 1:
-        progress_tasks = [(path, data) for path, data in active if has_progress_gate(data)]
-        if len(progress_tasks) == 1:
-            return progress_tasks[0]
-        if len(progress_tasks) > 1:
-            raise CollabError("Multiple active Trellis tasks have local progress; pass --task explicitly")
         raise CollabError("Multiple active Trellis tasks found and none has local progress; pass --task explicitly")
 
     non_archived = [(path, read_json(path)) for path in task_files if not is_archive_path(path, tasks_root)]

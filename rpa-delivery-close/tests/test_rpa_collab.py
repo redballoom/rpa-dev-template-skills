@@ -143,6 +143,14 @@ class RpaCollabTests(unittest.TestCase):
         self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
         self.assertEqual(result["task_id"], "demo")
 
+    def test_status_prefers_only_progress_task_even_when_archived(self):
+        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
+        task_dir = write_task(self.tasks_root, status="completed", gate="G5", next_owner="none", archived=True)
+        result = MODULE.build_status(self.project_root)
+        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
+        self.assertEqual(result["task_status"], "completed")
+        self.assertTrue(result["archived"])
+
     def test_suggest_recovery_when_completed_task_has_active_owner(self):
         write_task(self.tasks_root / "07-20-demo", status="completed", gate="G5", next_owner="user")
         status = MODULE.build_status(self.project_root)
