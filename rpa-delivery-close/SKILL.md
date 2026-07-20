@@ -89,6 +89,34 @@ Do not block local Gate closure only because no Base is configured. Do not claim
 
 When Trellis is present, use `task.json.meta.progress` as the current snapshot and task-local `progress.md` as append-only checkpoint history. Keep the canonical Gate route at G0-G5 and keep blockers separate from the Gate.
 
+Prefer the bundled guard CLI before deciding what to write:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> status
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
+```
+
+`status` and `suggest` are read-only. Use them at the start of a new session, before a Gate transition, before final delivery, and whenever chat history and local files may disagree. Treat the result as a fact check, not as automatic permission to advance. If the CLI reports lifecycle drift, use an explicit `recovery` calibration after explaining the evidence; do not invent missing historical Gate closes.
+
+For a project that has already been created by `rpa-project-bootstrap` but has not entered local collaboration tracking, use the collaboration bootstrap wrapper:
+
+```powershell
+trellis init `
+  --registry gh:redballoom/rpa-trellis-spec-templates/marketplace `
+  --template rpa-python-shadowbot `
+  --codex
+
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> bootstrap `
+  --project-name "项目名" `
+  --initial-gate G0 `
+  --evidence "AGENTS.md" `
+  --evidence "docs/OPERATION_GUIDE.md"
+```
+
+`rpa_collab.py bootstrap` requires a full Trellis workspace by default, especially `.trellis/spec`. If the workspace has not been initialized, pass `--init-trellis` with the Trellis command details or run `trellis init` first. Do not silently create a task-only `.trellis` directory for normal projects.
+
+This command creates or recognizes one delivery task, writes the initial local progress snapshot only when missing, and reads back `status` / `suggest`. It is intentionally idempotent: if `task.json.meta.progress` already exists, preserve it instead of overwriting the current Gate.
+
 Use the bundled script for deterministic writes:
 
 ```powershell
@@ -109,6 +137,20 @@ For an accepted Gate, use `--kind gate_close --accepted-gate G2 --gate G3`. The 
 A normal checkpoint must keep the saved current Gate. A Gate close must accept the saved current Gate and advance sequentially. This prevents a progress update from silently skipping work.
 
 Use `--kind recovery` only for explicit after-the-fact calibration. Describe the correction honestly; do not fabricate historical Gate events.
+
+For the common accepted-Gate path, use the guard CLI wrapper:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> gate-close `
+  --accepted-gate G2 `
+  --current-work "G2 契约已验收" `
+  --latest-checkpoint "用户确认契约并允许开发" `
+  --next-action "进入 G3 开发实现" `
+  --next-owner agent `
+  --evidence "docs/SHADOWBOT_INPUT_CONTRACT.md"
+```
+
+For G5 final calibration after user acceptance, use `finish`. It requires saved `current_gate=G5`, writes a final snapshot with `next_owner=none`, marks the task completed, and reads the status back so task lifecycle and progress do not drift apart.
 
 ## Delivery Readiness
 
@@ -141,9 +183,10 @@ Use `references/stage-h-checklist.md` as the detailed checklist when the user as
 
 ## Workflow
 
-1. Identify checkpoint, Gate close, or final delivery mode.
-2. Identify the project, Trellis task, accepted run, and optional Base project record.
-3. Build an evidence map:
+1. Identify the project, Trellis task, accepted run, and optional Base project record.
+2. Run or emulate the read-only `rpa_collab.py status` / `suggest` check before deciding the write mode.
+3. Identify checkpoint, Gate close, recovery, or final delivery mode from local facts and user statements.
+4. Build an evidence map:
    - PRD or requirement source
    - contract or input example
    - implementation files
@@ -152,24 +195,28 @@ Use `references/stage-h-checklist.md` as the detailed checklist when the user as
    - ShadowBot or user acceptance evidence
    - Git commit or pending commit plan
    - Base milestone status
-4. Report blockers before editing, syncing, or archiving anything.
-5. In checkpoint mode:
+5. Report blockers before editing, syncing, or archiving anything.
+6. In checkpoint mode:
    - update local Trellis progress without advancing the Gate;
    - record blocker and next owner when relevant;
    - do not create Base noise for every small checkpoint.
-6. In Gate close mode:
+7. In Gate close mode:
    - ask the mandatory local Gate close prompt before moving on;
    - after acceptance, update and read back local Trellis progress;
    - prepare one matching Base event only when Base sync is configured and authorized;
    - do not archive the whole task unless the user asked for final closure.
-7. In final delivery mode:
+8. In recovery mode:
+   - state which saved facts are stale and which evidence proves the correction;
+   - write one explicit recovery checkpoint rather than pretending skipped Gate closes occurred;
+   - read back status and continue from the calibrated state.
+9. In final delivery mode:
    - update delivery notes, Trellis task metadata, or project docs when appropriate;
    - confirm local progress and archive evidence are consistent;
    - confirm Base summaries only when Base is configured;
    - recommend archive only after user acceptance is clear.
-8. Write to Base only when the user has provided the target Base context and the active environment has a suitable Base tool.
-9. Recommend a Git milestone commit when files changed. Do not push, merge, delete history, or publish externally without explicit user approval.
-10. Finish with a compact checkpoint, Gate close, or Stage H report.
+10. Write to Base only when the user has provided the target Base context and the active environment has a suitable Base tool.
+11. Recommend a Git milestone commit when files changed. Do not push, merge, delete history, or publish externally without explicit user approval.
+12. Finish with a compact checkpoint, Gate close, recovery, or Stage H report.
 
 ## Optional Base Projection Rule
 

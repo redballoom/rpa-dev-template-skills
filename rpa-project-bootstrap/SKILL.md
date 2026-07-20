@@ -50,6 +50,29 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 7. Report initialized path, missing template files, commit hash, and doctor result.
 8. Do not implement business logic during initialization.
 
+## Collaboration Bootstrap Handoff
+
+This skill is the Project Bootstrap Core. It initializes a clean, runnable code project and stops there. Do not put Trellis task creation, Gate progress, Base sync, or workflow-Skill installation into `init_rpa_project.py`.
+
+After the core initializer succeeds, recommend the collaboration bootstrap step when the user wants the project to enter the G0-G5 human/Agent workflow:
+
+```powershell
+trellis init `
+  --registry gh:redballoom/rpa-trellis-spec-templates/marketplace `
+  --template rpa-python-shadowbot `
+  --codex
+
+python <rpa-delivery-close-skill-dir>\scripts\rpa_collab.py `
+  --project-root "<target_dir>" `
+  bootstrap `
+  --project-name "项目名" `
+  --initial-gate G0 `
+  --evidence "AGENTS.md" `
+  --evidence "docs/OPERATION_GUIDE.md"
+```
+
+The collaboration bootstrap requires a full Trellis workspace by default, including `.trellis/spec`. It is responsible for creating or recognizing the Trellis delivery task, writing the initial G0/G1 local progress snapshot, and reading back `status` / `suggest`. If that step fails, report that the code project is still initialized and runnable, while collaboration tracking needs Trellis init, resume, or recovery.
+
 ## Template Expectations
 
 The initialized project should include:
@@ -89,7 +112,7 @@ Include:
 Suggested next action for the user:
 
 ```text
-根据业务目标先设计 input_{run_id}.json 的 tasks[].type 和 payload，确认调用契约后再写 handler。
+先把项目接入本地协作进度（Trellis/Gate/status 回读），再根据业务目标设计 input_{run_id}.json 的 tasks[].type 和 payload，确认调用契约后再写 handler。
 ```
 
 ## Guardrails
@@ -97,4 +120,5 @@ Suggested next action for the user:
 - Do not keep the template `.git` history.
 - Do not commit real secrets.
 - Do not preserve runtime files such as root `input.json`, root `input_*.json`, `runner_*.json`, logs, crash snapshots, or data.
+- Do not create Trellis Gate progress or Base records in the core initializer; hand off to the collaboration bootstrap layer.
 - Do not push to remote unless explicitly requested.
