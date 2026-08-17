@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://redballoom.github.io/schemas/trellis-delivery.schema.json",
-  "title": "Hermes Extension For Trellis Task Delivery Metadata",
+  "title": "Project Gate Extension For Trellis Task Delivery Metadata",
   "type": "object",
   "additionalProperties": true,
   "properties": {

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Hermes project Gate controller and Trellis delivery guard.
+"""Project Gate controller and Trellis delivery guard.
 
-Hermes owns the project-level G0-G5 pointer and append-only Gate events.
+The Project Gate Controller owns the project-level G0-G5 pointer and
+append-only Gate events.
 Trellis remains the only owner of engineering Task lifecycle and artifacts.
 """
 
@@ -27,6 +28,8 @@ DELIVERY_STATES = ("paused", "blocked", "in_review", "cancelled")
 DEFAULT_TRELLIS_REGISTRY = "gh:redballoom/rpa-trellis-spec-templates"
 DEFAULT_TRELLIS_TEMPLATE = "rpa-python-shadowbot"
 SYSTEM_TASK_IDS = {"00-bootstrap-guidelines"}
+PROJECT_GATE_DIR = ".project-gates"
+LEGACY_PROJECT_GATE_DIR = ".hermes"
 
 
 class CollabError(RuntimeError):
@@ -175,32 +178,53 @@ def validate_project(project: dict[str, Any], path: Path) -> dict[str, Any]:
     return project
 
 
-def hermes_paths(project_root: Path) -> tuple[Path, Path]:
-    hermes_dir = project_root / ".hermes"
-    return hermes_dir / "project.json", hermes_dir / "gate-history.md"
+def project_gate_paths(project_root: Path) -> tuple[Path, Path]:
+    gate_dir = project_root / PROJECT_GATE_DIR
+    return gate_dir / "project.json", gate_dir / "gate-history.md"
 
 
-def read_hermes(project_root: Path, *, required: bool = True) -> dict[str, Any] | None:
-    project_path, _ = hermes_paths(project_root)
+def legacy_project_gate_paths(project_root: Path) -> tuple[Path, Path]:
+    legacy_dir = project_root / LEGACY_PROJECT_GATE_DIR
+    return legacy_dir / "project.json", legacy_dir / "gate-history.md"
+
+
+def legacy_project_gate_records(project_root: Path) -> list[str]:
+    return [str(path) for path in legacy_project_gate_paths(project_root) if path.exists()]
+
+
+def read_project_gate(project_root: Path, *, required: bool = True) -> dict[str, Any] | None:
+    project_path, _ = project_gate_paths(project_root)
     if not project_path.exists():
         if required:
-            raise CollabError("Hermes is not bootstrapped; run rpa_collab bootstrap first")
+            legacy = legacy_project_gate_records(project_root)
+            if legacy:
+                raise CollabError(
+                    "Legacy project Gate state exists under .hermes/. Run migration-preview "
+                    "and migrate-project-gates before continuing; .hermes/ is reserved for Hermes Agent."
+                )
+            raise CollabError("Project Gate tracking is not bootstrapped; run rpa_collab bootstrap first")
         return None
     return validate_project(read_json(project_path), project_path)
 
 
-def ensure_hermes(project_root: Path, project_id: str, initial_gate: str = "G0", *, dry_run: bool = False) -> dict[str, Any]:
+def ensure_project_gate(project_root: Path, project_id: str, initial_gate: str = "G0", *, dry_run: bool = False) -> dict[str, Any]:
     if initial_gate not in ("G0", "G1"):
         raise CollabError("Bootstrap initial_gate must be G0 or G1")
-    project_path, history_path = hermes_paths(project_root)
+    project_path, history_path = project_gate_paths(project_root)
     if project_path.exists():
         project = validate_project(read_json(project_path), project_path)
         expected_id = slugify(project_id)
         if project["project_id"] != expected_id:
             raise CollabError(
-                f"Hermes project_id is {project['project_id']}; bootstrap requested {expected_id}"
+                f"Project Gate project_id is {project['project_id']}; bootstrap requested {expected_id}"
             )
         return {"created": False, "project": project, "project_path": str(project_path)}
+    legacy = legacy_project_gate_records(project_root)
+    if legacy:
+        raise CollabError(
+            "Legacy project Gate state exists under .hermes/. Refusing to create a second Gate "
+            "snapshot; run migration-preview and migrate-project-gates first."
+        )
     project = {
         "schema_version": 1,
         "project_id": slugify(project_id),
@@ -212,7 +236,7 @@ def ensure_hermes(project_root: Path, project_id: str, initial_gate: str = "G0",
         write_json_atomic(project_path, project)
         if not history_path.exists():
             history_path.parent.mkdir(parents=True, exist_ok=True)
-            history_path.write_text("# Gate History\n\n", encoding="utf-8")
+            history_path.write_text("# Project Gate History\n\n", encoding="utf-8")
     return {"created": True, "project": project, "project_path": str(project_path), "dry_run": dry_run}
 
 
@@ -294,7 +318,7 @@ def create_task(project_root: Path, task_id_value: str, task_name: str, *, dry_r
             "--slug",
             slug,
             "--description",
-            "Project delivery Task managed by Trellis; project Gates are managed by Hermes.",
+            "Project delivery Task managed by Trellis; project Gates are managed by the Project Gate Controller.",
             "--no-start",
         ]
         proc = subprocess.run(
@@ -316,7 +340,7 @@ def create_task(project_root: Path, task_id_value: str, task_name: str, *, dry_r
         "id": slug,
         "name": task_name,
         "title": task_name,
-        "description": "Project delivery Task managed by Trellis; project Gates are managed by Hermes.",
+        "description": "Project delivery Task managed by Trellis; project Gates are managed by the Project Gate Controller.",
         "status": "planning",
         "dev_type": None,
         "scope": None,
@@ -382,7 +406,7 @@ def legacy_gate_records(project_root: Path) -> list[str]:
 
 def build_status(project_root: Path, task_input: str | None = None) -> dict[str, Any]:
     project_root = project_root.resolve()
-    project = read_hermes(project_root, required=False)
+    project = read_project_gate(project_root, required=False)
     selected: dict[str, Any] | None = None
     selected_path: Path | None = None
     selection_error: str | None = None
@@ -403,8 +427,16 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         tasks.append({"path": str(path), "id": task_id(path, data), "status": data.get("status"), "archived": is_archive_path(path, project_root / ".trellis" / "tasks"), "delivery_state": delivery_state})
         if delivery_state is not None and delivery_state not in DELIVERY_STATES:
             warnings.append({"code": "invalid_delivery_state", "message": f"Task {task_id(path, data)} has invalid delivery_state: {delivery_state}"})
+    legacy_project_gates = legacy_project_gate_records(project_root)
+    if legacy_project_gates:
+        warnings.append(
+            {
+                "code": "legacy_project_gate_directory",
+                "message": "Legacy project Gate files under .hermes/ require explicit migration to .project-gates/",
+            }
+        )
     if project is None:
-        warnings.append({"code": "missing_hermes", "message": "Hermes is not bootstrapped"})
+        warnings.append({"code": "missing_project_gate", "message": "Project Gate tracking is not bootstrapped"})
     if len(active_tasks(project_root)) > 1:
         warnings.append({"code": "multiple_active_tasks", "message": "More than one active engineering Task exists"})
     legacy = legacy_gate_records(project_root)
@@ -415,24 +447,39 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         warnings.append({"code": "unsafe_session_auto_commit", "message": "Trellis config is not explicitly session_auto_commit: false"})
     if selection_error and tasks:
         warnings.append({"code": "task_selection", "message": selection_error})
-    return {"ok": True, "project_root": str(project_root), "hermes": project, "selected_task": selected, "tasks": tasks, "legacy_records": legacy, "warnings": warnings, "runner": latest_runner(project_root), "git": git_info(project_root)}
+    return {
+        "ok": True,
+        "project_root": str(project_root),
+        "project_gate": project,
+        "selected_task": selected,
+        "tasks": tasks,
+        "legacy_records": legacy,
+        "legacy_project_gate_records": legacy_project_gates,
+        "warnings": warnings,
+        "runner": latest_runner(project_root),
+        "git": git_info(project_root),
+    }
 
 
 def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
     codes = {item["code"] for item in status.get("warnings", [])}
-    if "missing_hermes" in codes:
-        action, reason = "bootstrap", "Create Hermes project state before recording a Gate decision."
+    if "legacy_project_gate_directory" in codes and status.get("project_gate"):
+        action, reason = "resolve_project_gate_conflict", "Both current and legacy Gate records exist; compare them before removing the legacy files."
+    elif "legacy_project_gate_directory" in codes:
+        action, reason = "migrate_project_gates", "Move legacy Gate files out of the Hermes Agent project namespace before continuing."
+    elif "missing_project_gate" in codes:
+        action, reason = "bootstrap", "Create project Gate state before recording a Gate decision."
     elif "unsafe_session_auto_commit" in codes:
         action, reason = "configure_trellis", "Write and read back session_auto_commit: false before archive or journal operations."
     elif "legacy_gate_records" in codes:
-        action, reason = "migration_preview", "Review legacy Task-local Gate records and migrate them into Hermes after user awareness."
+        action, reason = "migration_preview", "Review legacy Task-local Gate records and migrate them into the Project Gate Controller after user awareness."
     elif "multiple_active_tasks" in codes:
         action, reason = "inspect_tasks", "Resolve the active engineering Task policy before continuing."
-    elif status.get("hermes", {}).get("current_gate") == "G5":
-        action, reason = "continue_task_or_revalidate", "Keep the project at G5; use a Task for maintenance or Hermes revalidation for major change."
+    elif status.get("project_gate", {}).get("current_gate") == "G5":
+        action, reason = "continue_task_or_revalidate", "Keep the project at G5; use a Task for maintenance or Gate revalidation for major change."
     else:
-        action, reason = "continue_current_gate", "Continue the selected engineering Task and close the current Hermes Gate only after user acceptance."
-    return {"ok": True, "recommended_action": action, "reason": reason, "current_gate": (status.get("hermes") or {}).get("current_gate")}
+        action, reason = "continue_current_gate", "Continue the selected engineering Task and close the current project Gate only after user acceptance."
+    return {"ok": True, "recommended_action": action, "reason": reason, "current_gate": (status.get("project_gate") or {}).get("current_gate")}
 
 
 def evidence_path(project_root: Path, reference: str) -> Path | None:
@@ -477,7 +524,7 @@ def history_has_event(history: str, stable_id: str) -> bool:
 
 
 def history_has_gate_close(project_root: Path, gate: str) -> bool:
-    _, history_path = hermes_paths(project_root)
+    _, history_path = project_gate_paths(project_root)
     if not history_path.exists():
         return False
     for section in history_path.read_text(encoding="utf-8").split("\n## "):
@@ -487,8 +534,8 @@ def history_has_gate_close(project_root: Path, gate: str) -> bool:
 
 
 def append_gate_event(project_root: Path, *, event_type: str, gate: str, accepted_by: str, timestamp: str, stable_id: str, task: str | None, evidence: list[str], reason: str, dry_run: bool = False) -> dict[str, Any]:
-    _, history_path = hermes_paths(project_root)
-    existing = history_path.read_text(encoding="utf-8") if history_path.exists() else "# Gate History\n\n"
+    _, history_path = project_gate_paths(project_root)
+    existing = history_path.read_text(encoding="utf-8") if history_path.exists() else "# Project Gate History\n\n"
     if history_has_event(existing, stable_id):
         return {"appended": False, "duplicate": True, "event_id": stable_id, "history_path": str(history_path)}
     lines = [f"## {one_line(timestamp)} - {gate} {event_type}", "", f"- event: {event_type}", f"- event_id: {stable_id}", f"- gate: {gate}", "- result: accepted", f"- accepted_by: {one_line(accepted_by)}"]
@@ -515,7 +562,7 @@ def bootstrap_collaboration(args: argparse.Namespace) -> dict[str, Any]:
         elif not args.allow_minimal:
             raise CollabError("Full Trellis workspace is missing; run trellis init first or pass --init-trellis")
     safe_config = ensure_trellis_safe_config(project_root, dry_run=args.dry_run) if (project_root / ".trellis").exists() or args.init_trellis else None
-    hermes = ensure_hermes(project_root, args.project_name, args.initial_gate, dry_run=args.dry_run)
+    project_gate = ensure_project_gate(project_root, args.project_name, args.initial_gate, dry_run=args.dry_run)
     created_task = False
     if args.task:
         task_file, task_data = match_task(project_root, args.task)
@@ -530,17 +577,17 @@ def bootstrap_collaboration(args: argparse.Namespace) -> dict[str, Any]:
                 dry_run=args.dry_run,
             )
             created_task = True
-    return {"ok": True, "created_task": created_task, "task_file": str(task_file), "task_id": task_id(task_file, task_data), "trellis_workspace": "full" if has_full_trellis_workspace(project_root) else "minimal", "trellis_init": trellis_result, "trellis_config": safe_config, "hermes": hermes, "status": build_status(project_root, str(task_file.parent)) if not args.dry_run else None}
+    return {"ok": True, "created_task": created_task, "task_file": str(task_file), "task_id": task_id(task_file, task_data), "trellis_workspace": "full" if has_full_trellis_workspace(project_root) else "minimal", "trellis_init": trellis_result, "trellis_config": safe_config, "project_gate": project_gate, "status": build_status(project_root, str(task_file.parent)) if not args.dry_run else None}
 
 
 def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate close requires --confirm-user-acceptance after the user explicitly accepts the result")
     project_root = Path(args.project_root).resolve()
-    project_path, _ = hermes_paths(project_root)
-    project = read_hermes(project_root)
+    project_path, _ = project_gate_paths(project_root)
+    project = read_project_gate(project_root)
     if project["current_gate"] != args.accepted_gate:
-        raise CollabError(f"Hermes current_gate is {project['current_gate']}; cannot close {args.accepted_gate}")
+        raise CollabError(f"Project Gate current_gate is {project['current_gate']}; cannot close {args.accepted_gate}")
     if args.accepted_gate == "G5" and (
         project["status"] != "active" or history_has_gate_close(project_root, "G5")
     ):
@@ -557,14 +604,14 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     project["updated_at"] = timestamp
     if not args.dry_run:
         write_json_atomic(project_path, project)
-    return {"ok": True, "event": event, "project": project, "read_back": read_hermes(project_root), "dry_run": args.dry_run}
+    return {"ok": True, "event": event, "project": project, "read_back": read_project_gate(project_root), "dry_run": args.dry_run}
 
 
 def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate revalidation requires --confirm-user-acceptance")
     project_root = Path(args.project_root).resolve()
-    project = read_hermes(project_root)
+    project = read_project_gate(project_root)
     if project["current_gate"] != "G5" or project["status"] != "operational":
         raise CollabError("Gate revalidation is available only after the first G5 close")
     refs = require_evidence(project_root, args.evidence)
@@ -572,7 +619,7 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     stable_id = event_id("gate-revalidation", args.gate, timestamp, args)
     task_file, task_data = match_task(project_root, args.task) if args.task or find_task_files(project_root) else (None, {})
     event = append_gate_event(project_root, event_type="gate-revalidation", gate=args.gate, accepted_by="user", timestamp=timestamp, stable_id=stable_id, task=task_id(task_file, task_data) if task_file else None, evidence=refs, reason=args.reason, dry_run=args.dry_run)
-    return {"ok": True, "event": event, "project": project, "current_gate_unchanged": True, "read_back": read_hermes(project_root), "dry_run": args.dry_run}
+    return {"ok": True, "event": event, "project": project, "current_gate_unchanged": True, "read_back": read_project_gate(project_root), "dry_run": args.dry_run}
 
 
 def archive_check(args: argparse.Namespace) -> dict[str, Any]:
@@ -586,9 +633,9 @@ def archive_check(args: argparse.Namespace) -> dict[str, Any]:
     evidence = archive.get("evidence_refs") or task.get("evidence_refs") or meta.get("evidence_refs") or []
     missing: list[str] = []
     try:
-        read_hermes(project_root)
+        read_project_gate(project_root)
     except CollabError:
-        missing.append("hermes_state")
+        missing.append("project_gate_state")
     config_path = project_root / ".trellis" / "config.yaml"
     config_text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
     if not re.search(r"(?m)^\s*session_auto_commit\s*:\s*false\s*(?:#.*)?$", config_text):
@@ -661,8 +708,128 @@ def archive_check(args: argparse.Namespace) -> dict[str, Any]:
 def migration_preview(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
     records = legacy_gate_records(project_root)
-    hermes = read_hermes(project_root, required=False)
-    return {"ok": True, "write_performed": False, "legacy_records": records, "hermes": hermes, "action": "After user awareness, create Hermes state and append an explicit migration/recovery event; do not dual-write."}
+    legacy_project_records = legacy_project_gate_records(project_root)
+    project_gate = read_project_gate(project_root, required=False)
+    actions: list[str] = []
+    if legacy_project_records and project_gate:
+        actions.append(
+            "Both .project-gates/ and legacy .hermes/ Gate records exist. Compare them and resolve the conflict; "
+            "migrate-project-gates will not merge two states."
+        )
+    elif legacy_project_records:
+        actions.append(
+            "Run migrate-project-gates with explicit confirmation to move only the legacy Gate files "
+            "from .hermes/ to .project-gates/."
+        )
+    if records:
+        actions.append(
+            "After user awareness, recover verified Task-local Gate facts into the Project Gate Controller; "
+            "do not dual-write."
+        )
+    if not actions:
+        actions.append("No legacy project Gate records were found.")
+    return {
+        "ok": True,
+        "write_performed": False,
+        "legacy_records": records,
+        "legacy_project_gate_records": legacy_project_records,
+        "project_gate": project_gate,
+        "actions": actions,
+    }
+
+
+def migrate_project_gates(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.confirm_migration:
+        raise CollabError("Project Gate directory migration requires --confirm-migration")
+
+    project_root = Path(args.project_root).resolve()
+    legacy_project_path, legacy_history_path = legacy_project_gate_paths(project_root)
+    project_path, history_path = project_gate_paths(project_root)
+    gate_dir = project_path.parent
+
+    if project_path.exists() or history_path.exists():
+        raise CollabError(
+            ".project-gates/ already contains Gate state; refusing to merge it with legacy .hermes/ files"
+        )
+    if gate_dir.exists() and any(gate_dir.iterdir()):
+        raise CollabError(".project-gates/ contains unknown files; refusing to write migration output")
+    if not legacy_project_path.exists():
+        raise CollabError("No legacy .hermes/project.json Gate snapshot was found")
+
+    project = validate_project(read_json(legacy_project_path), legacy_project_path)
+    history = (
+        legacy_history_path.read_text(encoding="utf-8")
+        if legacy_history_path.exists()
+        else "# Project Gate History\n\n"
+    )
+    timestamp = getattr(args, "timestamp", None) or now_iso()
+    migration_event = "\n".join(
+        [
+            f"## {timestamp} - controller-storage-migration",
+            "",
+            "- event: controller-storage-migration",
+            "- from: .hermes/",
+            "- to: .project-gates/",
+            "- result: completed",
+            "- reason: avoid collision with the Hermes Agent project namespace",
+            "",
+        ]
+    )
+
+    if args.dry_run:
+        return {
+            "ok": True,
+            "write_performed": False,
+            "dry_run": True,
+            "source_records": legacy_project_gate_records(project_root),
+            "destination": str(project_path.parent),
+            "project": project,
+        }
+
+    project_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        write_json_atomic(project_path, project)
+        history_path.write_text(history.rstrip() + "\n\n" + migration_event, encoding="utf-8")
+        read_project_gate(project_root)
+    except Exception:
+        if project_path.exists():
+            project_path.unlink()
+        if history_path.exists():
+            history_path.unlink()
+        try:
+            project_path.parent.rmdir()
+        except OSError:
+            pass
+        raise
+
+    cleanup_errors: list[str] = []
+    for legacy_path in (legacy_project_path, legacy_history_path):
+        if legacy_path.exists():
+            try:
+                legacy_path.unlink()
+            except OSError as exc:
+                cleanup_errors.append(f"{legacy_path}: {exc}")
+    try:
+        legacy_project_path.parent.rmdir()
+    except OSError:
+        pass
+
+    if cleanup_errors:
+        raise CollabError(
+            "Project Gate state was written to .project-gates/, but legacy Gate files could not be removed: "
+            + "; ".join(cleanup_errors)
+        )
+
+    return {
+        "ok": True,
+        "write_performed": True,
+        "source": LEGACY_PROJECT_GATE_DIR,
+        "destination": PROJECT_GATE_DIR,
+        "project": read_project_gate(project_root),
+        "history_path": str(history_path),
+        "legacy_directory_preserved": legacy_project_path.parent.exists(),
+        "cleanup_errors": cleanup_errors,
+    }
 
 
 def print_json(data: dict[str, Any]) -> None:

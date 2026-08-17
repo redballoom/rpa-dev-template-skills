@@ -44,12 +44,12 @@ The result appears in the initializer JSON under `post_init_checks`. A skipped c
 
 ## Collaboration Bootstrap
 
-For a formal human/Agent project, verify after Trellis and Hermes initialization:
+For a formal human/Agent project, verify after Trellis and Project Gate Controller initialization:
 
 - `.trellis/spec` exists and came from the pinned RPA registry.
 - `.trellis/config.yaml` contains active `session_auto_commit: false`.
-- `.hermes/project.json` starts at the accepted initial Gate.
-- `.hermes/gate-history.md` exists for append-only close and revalidation events.
+- `.project-gates/project.json` starts at the accepted initial Gate.
+- `.project-gates/gate-history.md` exists for append-only close and revalidation events.
 - Trellis Task metadata does not contain a second `current_gate` or Gate history.
 
 ## Next Step

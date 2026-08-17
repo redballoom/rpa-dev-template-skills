@@ -10,12 +10,13 @@ Use this checklist before closing an RPA project or telling the user the deliver
 - `tasks[].type`, payload, output, status, exception semantics, and acceptance examples are known.
 - The user explicitly confirmed the contract before implementation, or the final report clearly says this was a legacy or recovery project without prior contract confirmation.
 
-## 2. Hermes And Trellis
+## 2. Project Gate Controller And Trellis
 
-Hermes:
+Project Gate Controller:
 
-- `.hermes/project.json` contains the only project `current_gate`.
-- `.hermes/gate-history.md` contains the accepted Gate close or revalidation event when applicable.
+- `.project-gates/project.json` contains the only project `current_gate`.
+- `.project-gates/gate-history.md` contains the accepted Gate close or revalidation event when applicable.
+- Legacy `.hermes/project.json` and `.hermes/gate-history.md` are absent; `.hermes/plugins/` may remain for Hermes Agent.
 - The Gate event references evidence rather than copying its content.
 - G5 maintenance keeps `current_gate=G5`; major changes append revalidation events.
 
@@ -33,7 +34,7 @@ Trellis:
 When Trellis is absent:
 
 - Do not claim a formal Task archive.
-- Use Hermes, project docs, Git, runner evidence, and user acceptance to report what is known.
+- Use Project Gate Controller, project docs, Git, runner evidence, and user acceptance to report what is known.
 - State that the project did not provide Trellis Task evidence.
 
 ## 3. Git
@@ -67,7 +68,7 @@ When Trellis is absent:
 
 ## 6. Recovery State
 
-- Hermes, Trellis, Git/PR, and runner facts are sufficient to recover without chat or Base.
+- Project Gate Controller, Trellis, Git/PR, and runner facts are sufficient to recover without chat or Base.
 - `session_auto_commit: false` is explicitly active in `.trellis/config.yaml`.
 - The final Task summary names remaining risk and evidence.
 - Migration or recovery events are labeled honestly rather than backdated as historical Gate closes.

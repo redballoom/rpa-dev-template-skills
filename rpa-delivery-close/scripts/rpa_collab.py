@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""CLI for Hermes project Gates and Trellis engineering Task coordination."""
+"""CLI for Project Gates and Trellis engineering Task coordination."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-import hermes_controller as controller
+import project_gate_controller as controller
 
 
 def add_trellis_init_args(parser: argparse.ArgumentParser) -> None:
@@ -33,11 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--task", help="Task path or id")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("status", help="Read Hermes, Trellis, Git, and runner facts")
+    subparsers.add_parser("status", help="Read Project Gate, Trellis, Git, and runner facts")
 
     subparsers.add_parser("suggest", help="Recommend the next legal action")
 
-    bootstrap = subparsers.add_parser("bootstrap", help="Initialize Hermes and attach one Trellis engineering Task")
+    bootstrap = subparsers.add_parser("bootstrap", help="Initialize Project Gate tracking and attach one Trellis engineering Task")
     bootstrap.add_argument("--project-name", required=True)
     bootstrap.add_argument("--task-id")
     bootstrap.add_argument("--task-name")
@@ -46,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_trellis_init_args(bootstrap)
     bootstrap.add_argument("--dry-run", action="store_true")
 
-    close = subparsers.add_parser("gate-close", help="Close the current Hermes Gate after explicit user acceptance")
+    close = subparsers.add_parser("gate-close", help="Close the current project Gate after explicit user acceptance")
     close.add_argument("--accepted-gate", choices=controller.GATES, required=True)
     add_evidence_args(close)
 
@@ -57,7 +57,15 @@ def build_parser() -> argparse.ArgumentParser:
     archive = subparsers.add_parser("archive-check", help="Check evidence before calling Trellis archive")
     archive.add_argument("--user-accepted", action="store_true")
 
-    subparsers.add_parser("migration-preview", help="Read legacy Task-local Gate records without writing")
+    subparsers.add_parser("migration-preview", help="Read legacy Task-local and .hermes Gate records without writing")
+
+    migrate = subparsers.add_parser(
+        "migrate-project-gates",
+        help="Move legacy .hermes Gate files to .project-gates without touching Hermes Agent plugins",
+    )
+    migrate.add_argument("--confirm-migration", action="store_true")
+    migrate.add_argument("--timestamp")
+    migrate.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -80,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
             controller.print_json(controller.archive_check(args))
         elif args.command == "migration-preview":
             controller.print_json(controller.migration_preview(args))
+        elif args.command == "migrate-project-gates":
+            controller.print_json(controller.migrate_project_gates(args))
         else:
             raise controller.CollabError(f"Unknown command: {args.command}")
     except controller.CollabError as exc:

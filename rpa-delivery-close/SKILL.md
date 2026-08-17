@@ -1,6 +1,6 @@
 ---
 name: rpa-delivery-close
-description: Inspect and close delivery work for projects created from rpa-dev-template. Use whenever the user asks where an RPA project is, confirms a G0-G5 result, reports a blocker or owner handoff, asks to recover cross-session state, requests Gate revalidation, wants to archive a Trellis Task, asks for Stage H, or requests a Feishu Base projection. Trellis is the only engineering Task authority; Hermes .hermes/ is the only project Gate authority. Always run the evidence guard before Trellis archive and never write project Gates into Task metadata or progress.md.
+description: Inspect and close delivery work for projects created from rpa-dev-template. Use whenever the user asks where an RPA project is, confirms a G0-G5 result, reports a blocker or owner handoff, asks to recover cross-session state, requests Gate revalidation, wants to archive a Trellis Task, asks for Stage H, or requests a Feishu Base projection. Trellis is the only engineering Task authority; Project Gate Controller .project-gates/ is the only project Gate authority. Always run the evidence guard before Trellis archive and never write project Gates into Task metadata or progress.md.
 ---
 
 # RPA Delivery Close
@@ -8,7 +8,7 @@ description: Inspect and close delivery work for projects created from rpa-dev-t
 Use this skill to combine project governance and engineering evidence without creating a second Task system.
 
 ```text
-Hermes .hermes/        = project G0-G5 and accepted Gate events
+Project Gate Controller .project-gates/        = project G0-G5 and accepted Gate events
 Trellis .trellis/      = engineering Task, plan, notes, checks, and archive
 Git / PR               = code version and technical acceptance
 runner / ShadowBot     = target-environment execution evidence
@@ -22,7 +22,7 @@ One fact has one writer. Do not copy `current_gate` into `task.json`, Task notes
 
 Read, when present:
 
-1. `.hermes/project.json` and the latest `.hermes/gate-history.md` event.
+1. `.project-gates/project.json` and the latest `.project-gates/gate-history.md` event.
 2. Current and active Trellis Tasks, including PRD, design, implementation plan, notes, metadata, and final summary.
 3. Linked Issue and PR.
 4. Git status and recent commits.
@@ -40,7 +40,7 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
 
 ## Collaboration Bootstrap
 
-After `rpa-project-bootstrap` creates the runnable code project, initialize Trellis with the pinned RPA Spec and then bootstrap Hermes:
+After `rpa-project-bootstrap` creates the runnable code project, initialize Trellis with the pinned RPA Spec and then bootstrap Project Gate Controller:
 
 ```powershell
 npx --yes @mindfoldhq/trellis@0.6.14 init `
@@ -57,12 +57,12 @@ python <skill-dir>\scripts\rpa_collab.py `
 
 Bootstrap is idempotent. It:
 
-- creates or validates `.hermes/project.json` and `.hermes/gate-history.md`;
+- creates or validates `.project-gates/project.json` and `.project-gates/gate-history.md`;
 - creates or attaches one Trellis engineering Task without adding Gate fields;
 - writes and reads back `session_auto_commit: false` in `.trellis/config.yaml`;
 - ignores Trellis's `00-bootstrap-guidelines` system Task for the one-active-Task policy.
 
-The project snapshot contract is published in `references/hermes-project.schema.json`. Gate history remains append-only Markdown because it is an audit log, not a mutable snapshot.
+The project snapshot contract is published in `references/project-gate.schema.json`. Gate history remains append-only Markdown because it is an audit log, not a mutable snapshot.
 
 Use `--init-trellis` only when an interactive Trellis CLI can run in the current environment. Use `--allow-minimal` only for an explicitly degraded test or recovery case.
 
@@ -81,11 +81,11 @@ G5 业务验收与发布
 
 Before closing a Gate:
 
-1. Read Hermes and the relevant Trellis Task.
+1. Read Project Gate Controller and the relevant Trellis Task.
 2. Report the completed result, evidence, remaining risk, and proposed next Gate.
-3. Ask exactly: `当前 Gate 是否验收通过，并记录到 Hermes？`
+3. Ask exactly: `当前 Gate 是否验收通过，并记录到 Project Gate Controller？`
 4. Only after explicit acceptance, run `gate-close` with `--confirm-user-acceptance`.
-5. Read back Hermes and update only Task-owned evidence in Trellis.
+5. Read back Project Gate Controller and update only Task-owned evidence in Trellis.
 
 Example:
 
@@ -105,7 +105,7 @@ The CLI rejects stale or repeated Gate closes. G0-G4 advance sequentially. Closi
 
 ## G5 Revalidation
 
-After the first G5 close, maintenance never rewinds the project Gate. A major change may repeat G2/G3/G4/G5-type work in Trellis and append a Hermes revalidation after user acceptance:
+After the first G5 close, maintenance never rewinds the project Gate. A major change may repeat G2/G3/G4/G5-type work in Trellis and append a Project Gate Controller revalidation after user acceptance:
 
 ```powershell
 python <skill-dir>\scripts\rpa_collab.py `
@@ -149,7 +149,7 @@ python <skill-dir>\scripts\rpa_collab.py `
 
 The Task should provide:
 
-- valid Hermes project state and explicit `session_auto_commit: false`;
+- valid Project Gate Controller project state and explicit `session_auto_commit: false`;
 - `meta.archive_evidence.acceptance_criteria` entries with accepted result and evidence references;
 - `meta.archive_evidence.technical_checks` entries with passed result and evidence references;
 - a Git commit that exists locally;
@@ -185,17 +185,33 @@ Recommended Task metadata:
 }
 ```
 
-If the guard returns `ready=false`, do not call Trellis archive. Report the exact missing items and the smallest next action. A raw Trellis archive never closes a Hermes Gate, closes an Issue, merges a PR, or publishes a release.
+If the guard returns `ready=false`, do not call Trellis archive. Report the exact missing items and the smallest next action. A raw Trellis archive never closes a Project Gate, closes an Issue, merges a PR, or publishes a release.
 
 ## Migration
 
-Older projects may contain `task.json.meta.progress.current_gate` or Task-local `progress.md`. Preview them without writing:
+Older projects may contain either:
+
+- project Gate files under `.hermes/project.json` and `.hermes/gate-history.md`;
+- `task.json.meta.progress.current_gate` or Task-local `progress.md`.
+
+Preview all legacy records without writing:
 
 ```powershell
 python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> migration-preview
 ```
 
-After user awareness, create Hermes state from verified evidence and append an explicit migration/recovery event. Then remove legacy Gate fields from active Task metadata. Do not maintain a compatibility dual-writer. The retired `update_trellis_progress.py` intentionally refuses writes.
+When old `.hermes/` Gate files are present, bootstrap, Gate close, and revalidation must stop before creating a second state. After explicit migration approval, run:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py `
+  --project-root <project-root> `
+  migrate-project-gates `
+  --confirm-migration
+```
+
+This command moves only the two legacy Gate files into `.project-gates/`, records a storage-migration event, and preserves `.hermes/plugins/` and every other Hermes Agent file.
+
+For Task-local Gate fields, create or verify Project Gate Controller state from evidence and append an explicit migration/recovery event after user awareness. Then remove legacy Gate fields from active Task metadata. Do not maintain a compatibility dual-writer. The retired `update_trellis_progress.py` intentionally refuses writes.
 
 ## Final Delivery
 
@@ -206,7 +222,7 @@ Before saying Stage H is ready, check:
 - Git commit and PR state;
 - tests and runner result;
 - ShadowBot and business acceptance;
-- Hermes Gate close or revalidation event, when applicable;
+- Project Gate close or revalidation event, when applicable;
 - archive guard result;
 - remaining risk and owner.
 
@@ -214,7 +230,7 @@ Use `references/stage-h-checklist.md` for the detailed checklist.
 
 ## Optional Base Projection
 
-Base is optional and read-only. Derive its summary from saved Hermes, Trellis, Git/PR, runner, and Issue facts. A Base write never closes a Gate, archives a Task, closes an Issue, merges a PR, or publishes a release.
+Base is optional and read-only. Derive its summary from saved Project Gate Controller, Trellis, Git/PR, runner, and Issue facts. A Base write never closes a Gate, archives a Task, closes an Issue, merges a PR, or publishes a release.
 
 Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or the complete Task tree. If Base is requested but the target record is unknown, request the Base link or record ID before claiming synchronization.
 
@@ -223,7 +239,8 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not mark delivery complete when required runner evidence is missing or failed.
 - Do not replace user acceptance with tests alone.
 - Do not write Gate state into Trellis Task metadata or `progress.md`.
+- Do not write project Gate state under `.hermes/`; that namespace belongs to Hermes Agent.
 - Do not change a Gate without explicit user acceptance.
 - Do not archive a Task before `archive-check` returns ready.
-- Do not make Trellis, Hermes, Base, or Gitea a Python runner dependency.
+- Do not make Trellis, Project Gate Controller, Base, or Gitea a Python runner dependency.
 - Do not push, merge, close an Issue, publish, delete, or rewrite history without explicit authorization.

@@ -9,9 +9,9 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
-SCRIPT = SCRIPT_DIR / "hermes_controller.py"
+SCRIPT = SCRIPT_DIR / "project_gate_controller.py"
 sys.path.insert(0, str(SCRIPT_DIR))
-SPEC = importlib.util.spec_from_file_location("hermes_controller", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("project_gate_controller", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
@@ -99,7 +99,25 @@ def gate_args(project_root: Path, **overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**values)
 
 
-class HermesControllerTests(unittest.TestCase):
+def write_legacy_project_gate(project_root: Path) -> None:
+    legacy_dir = project_root / ".hermes"
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+    (legacy_dir / "project.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "project_id": "demo-project",
+                "current_gate": "G3",
+                "status": "active",
+                "updated_at": "2026-08-17T10:00:00+08:00",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (legacy_dir / "gate-history.md").write_text("# Gate History\n\n", encoding="utf-8")
+
+
+class ProjectGateControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.project_root = Path(self.temp_dir.name)
@@ -134,14 +152,14 @@ class HermesControllerTests(unittest.TestCase):
 
     def test_published_schemas_are_valid_json(self) -> None:
         references = Path(__file__).resolve().parents[1] / "references"
-        project_schema = json.loads((references / "hermes-project.schema.json").read_text(encoding="utf-8"))
+        project_schema = json.loads((references / "project-gate.schema.json").read_text(encoding="utf-8"))
         delivery_schema = json.loads((references / "trellis-delivery.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(project_schema["properties"]["schema_version"]["const"], 1)
         self.assertIn("archive_evidence", delivery_schema["properties"])
 
-    def test_bootstrap_creates_hermes_and_task_without_task_gate_state(self) -> None:
+    def test_bootstrap_creates_project_gate_and_task_without_task_gate_state(self) -> None:
         result = MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
-        project = json.loads((self.project_root / ".hermes" / "project.json").read_text(encoding="utf-8"))
+        project = json.loads((self.project_root / ".project-gates" / "project.json").read_text(encoding="utf-8"))
         task = json.loads((self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(encoding="utf-8"))
         self.assertEqual(project["current_gate"], "G0")
         self.assertEqual(task["status"], "planning")
@@ -158,7 +176,7 @@ class HermesControllerTests(unittest.TestCase):
             (self.project_root / ".trellis" / "tasks" / "unexpected-task" / "task.json").exists()
         )
 
-    def test_status_combines_hermes_task_git_runner_and_detects_legacy(self) -> None:
+    def test_status_combines_project_gate_task_git_runner_and_detects_legacy(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         task_file = self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json"
         task = json.loads(task_file.read_text(encoding="utf-8"))
@@ -166,7 +184,7 @@ class HermesControllerTests(unittest.TestCase):
         task_file.write_text(json.dumps(task), encoding="utf-8")
         (self.project_root / "runner_demo.json").write_text('{"run_id":"demo","status":"success"}', encoding="utf-8")
         status = MODULE.build_status(self.project_root)
-        self.assertEqual(status["hermes"]["current_gate"], "G0")
+        self.assertEqual(status["project_gate"]["current_gate"], "G0")
         self.assertEqual(status["selected_task"]["id"], "demo-delivery")
         self.assertEqual(status["runner"]["status"], "success")
         self.assertIn("legacy_gate_records", {item["code"] for item in status["warnings"]})
@@ -176,11 +194,11 @@ class HermesControllerTests(unittest.TestCase):
         with self.assertRaises(MODULE.CollabError):
             MODULE.close_gate(gate_args(self.project_root, confirm_user_acceptance=False))
 
-    def test_gate_close_advances_hermes_without_writing_task_progress(self) -> None:
+    def test_gate_close_advances_project_gate_without_writing_task_progress(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         result = MODULE.close_gate(gate_args(self.project_root))
         task = json.loads((self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(encoding="utf-8"))
-        history = (self.project_root / ".hermes" / "gate-history.md").read_text(encoding="utf-8")
+        history = (self.project_root / ".project-gates" / "gate-history.md").read_text(encoding="utf-8")
         self.assertEqual(result["read_back"]["current_gate"], "G1")
         self.assertIn("- event: gate-close", history)
         self.assertIn("- gate: G0", history)
@@ -194,7 +212,7 @@ class HermesControllerTests(unittest.TestCase):
 
     def test_g5_close_becomes_operational_and_revalidation_keeps_g5(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
-        project_path = self.project_root / ".hermes" / "project.json"
+        project_path = self.project_root / ".project-gates" / "project.json"
         project = json.loads(project_path.read_text(encoding="utf-8"))
         project["current_gate"] = "G5"
         project_path.write_text(json.dumps(project), encoding="utf-8")
@@ -261,14 +279,78 @@ class HermesControllerTests(unittest.TestCase):
         result = MODULE.archive_check(args)
         self.assertIn("task_already_archived", result["missing"])
 
-    def test_migration_preview_never_writes_hermes(self) -> None:
+    def test_migration_preview_never_writes_project_gate(self) -> None:
         task_dir = write_task(self.project_root, meta={"progress": {"current_gate": "G3"}})
         (task_dir / "progress.md").write_text("# Legacy\n", encoding="utf-8")
         args = argparse.Namespace(project_root=str(self.project_root))
         result = MODULE.migration_preview(args)
         self.assertFalse(result["write_performed"])
         self.assertEqual(len(result["legacy_records"]), 2)
-        self.assertFalse((self.project_root / ".hermes").exists())
+        self.assertFalse((self.project_root / ".project-gates").exists())
+
+    def test_legacy_hermes_gate_files_block_bootstrap(self) -> None:
+        write_legacy_project_gate(self.project_root)
+        status = MODULE.build_status(self.project_root)
+        codes = {item["code"] for item in status["warnings"]}
+        self.assertIn("legacy_project_gate_directory", codes)
+        self.assertIsNone(status["project_gate"])
+        self.assertEqual(MODULE.suggest_action(status)["recommended_action"], "migrate_project_gates")
+        with self.assertRaises(MODULE.CollabError):
+            MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        self.assertFalse((self.project_root / ".project-gates").exists())
+
+    def test_project_gate_migration_requires_confirmation(self) -> None:
+        write_legacy_project_gate(self.project_root)
+        args = argparse.Namespace(
+            project_root=str(self.project_root),
+            confirm_migration=False,
+            timestamp="2026-08-17T12:00:00+08:00",
+            dry_run=False,
+        )
+        with self.assertRaises(MODULE.CollabError):
+            MODULE.migrate_project_gates(args)
+
+    def test_current_and_legacy_gate_states_require_manual_conflict_resolution(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        write_legacy_project_gate(self.project_root)
+        status = MODULE.build_status(self.project_root)
+        self.assertEqual(
+            MODULE.suggest_action(status)["recommended_action"],
+            "resolve_project_gate_conflict",
+        )
+        preview = MODULE.migration_preview(argparse.Namespace(project_root=str(self.project_root)))
+        self.assertIn("will not merge", preview["actions"][0])
+        args = argparse.Namespace(
+            project_root=str(self.project_root),
+            confirm_migration=True,
+            timestamp="2026-08-17T12:00:00+08:00",
+            dry_run=False,
+        )
+        with self.assertRaises(MODULE.CollabError):
+            MODULE.migrate_project_gates(args)
+
+    def test_project_gate_migration_preserves_hermes_agent_plugins(self) -> None:
+        write_legacy_project_gate(self.project_root)
+        plugin_dir = self.project_root / ".hermes" / "plugins" / "sample"
+        plugin_dir.mkdir(parents=True)
+        (plugin_dir / "plugin.yaml").write_text("name: sample\n", encoding="utf-8")
+        args = argparse.Namespace(
+            project_root=str(self.project_root),
+            confirm_migration=True,
+            timestamp="2026-08-17T12:00:00+08:00",
+            dry_run=False,
+        )
+
+        result = MODULE.migrate_project_gates(args)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["project"]["current_gate"], "G3")
+        self.assertFalse((self.project_root / ".hermes" / "project.json").exists())
+        self.assertFalse((self.project_root / ".hermes" / "gate-history.md").exists())
+        self.assertTrue((plugin_dir / "plugin.yaml").exists())
+        history = (self.project_root / ".project-gates" / "gate-history.md").read_text(encoding="utf-8")
+        self.assertIn("controller-storage-migration", history)
+        self.assertIn("from: .hermes/", history)
 
 
 if __name__ == "__main__":

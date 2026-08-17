@@ -12,7 +12,7 @@ class ProgressError(RuntimeError):
 
 MESSAGE = (
     "Task-local Gate progress is retired. Use rpa_collab.py gate-close or "
-    "gate-revalidate so project Gates are written only to .hermes/."
+    "gate-revalidate so project Gates are written only to .project-gates/."
 )
 
 

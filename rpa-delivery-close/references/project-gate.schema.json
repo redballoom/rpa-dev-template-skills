@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://redballoom.github.io/schemas/hermes-project.schema.json",
-  "title": "Hermes Project Gate Snapshot",
+  "$id": "https://redballoom.github.io/schemas/project-gate.schema.json",
+  "title": "Project Gate Snapshot",
   "type": "object",
   "additionalProperties": false,
   "required": [

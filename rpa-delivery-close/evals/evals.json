@@ -4,22 +4,22 @@
     {
       "id": 1,
       "prompt": "这个 RPA 项目刚完成 G3 技术验证，测试和 dry-run 都通过了，但没有飞书 Base。请准备让我验收。",
-      "expected_output": "Agent 读取 Hermes Gate、Trellis Task 和技术证据，先报告 G3 结果并请求验收；确认后只把 Gate close 写入 Hermes，不要求 Base。",
+      "expected_output": "Agent 读取 Project Gate、Trellis Task 和技术证据，先报告 G3 结果并请求验收；确认后只把 Gate close 写入 Project Gate Controller，不要求 Base。",
       "files": [],
       "expectations": [
         "The response does not require a Base link for local Gate closure.",
-        "The response asks for G3 acceptance before writing Hermes.",
-        "The response identifies .hermes/project.json and gate-history.md as Gate records.",
+        "The response asks for G3 acceptance before writing Project Gate Controller.",
+        "The response identifies .project-gates/project.json and gate-history.md as Gate records.",
         "The response does not write current_gate into Trellis Task metadata or progress.md."
       ]
     },
     {
       "id": 2,
       "prompt": "真实联调因为上游 IP 白名单失败，代码不需要改。记录阻塞，下一步责任人是外部系统管理员。",
-      "expected_output": "Agent 保持 Hermes 当前 Gate 不变，把 blocker 和下一工程动作留在 Trellis Task，不错误推进 Gate 或修改 Python。",
+      "expected_output": "Agent 保持 Project Gate Controller 当前 Gate 不变，把 blocker 和下一工程动作留在 Trellis Task，不错误推进 Gate 或修改 Python。",
       "files": [],
       "expectations": [
-        "The response keeps the current Hermes Gate unchanged.",
+        "The response keeps the current Project Gate unchanged.",
         "The response records blocker and owner as Task-owned facts in Trellis.",
         "The response does not recommend changing Python without code evidence.",
         "The response requests or references runner evidence without inventing success."
@@ -28,7 +28,7 @@
     {
       "id": 3,
       "prompt": "业务验收通过了，请完成 Stage H。项目配置了管理 Base，也要同步。",
-      "expected_output": "Agent 验证 Hermes、Trellis、Git/PR、runner 和用户验收，运行 archive-check，再分别处理 Gate、Task archive 和只读 Base 投影。",
+      "expected_output": "Agent 验证 Project Gate Controller、Trellis、Git/PR、runner 和用户验收，运行 archive-check，再分别处理 Gate、Task archive 和只读 Base 投影。",
       "files": [],
       "expectations": [
         "The response runs or requires archive-check before Trellis archive.",
@@ -46,7 +46,7 @@
         "The response refuses to rewind the project Gate from G5.",
         "The response uses a Trellis Task for the change.",
         "The response proposes a G2 gate-revalidation only after explicit acceptance.",
-        "The response keeps Hermes current_gate at G5."
+        "The response keeps Project Gate Controller current_gate at G5."
       ]
     }
   ]

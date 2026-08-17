@@ -15,7 +15,7 @@ class RetiredProgressWriterTests(unittest.TestCase):
     def test_legacy_writer_refuses_task_local_gate_updates(self) -> None:
         with self.assertRaises(MODULE.ProgressError) as context:
             MODULE.update_progress(argparse.Namespace())
-        self.assertIn(".hermes/", str(context.exception))
+        self.assertIn(".project-gates/", str(context.exception))
 
 
 if __name__ == "__main__":

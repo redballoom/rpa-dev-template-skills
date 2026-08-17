@@ -69,7 +69,9 @@ python <rpa-delivery-close-skill-dir>\scripts\rpa_collab.py `
   --initial-gate G0
 ```
 
-The collaboration bootstrap requires a full Trellis workspace by default, including `.trellis/spec`. It creates or recognizes one Trellis engineering Task, creates `.hermes/project.json` and `.hermes/gate-history.md`, writes `session_auto_commit: false` to `.trellis/config.yaml`, and reads the result back. It must not add `current_gate` or Gate history to Trellis Task metadata. If this step fails, report that the code project is still initialized and runnable while collaboration governance needs initialization or recovery.
+The collaboration bootstrap requires a full Trellis workspace by default, including `.trellis/spec`. It creates or recognizes one Trellis engineering Task, creates `.project-gates/project.json` and `.project-gates/gate-history.md`, writes `session_auto_commit: false` to `.trellis/config.yaml`, and reads the result back. It must not add `current_gate` or Gate history to Trellis Task metadata. If this step fails, report that the code project is still initialized and runnable while collaboration governance needs initialization or recovery.
+
+If an existing project contains legacy `.hermes/project.json`, do not bootstrap a second Gate state. Hand off to `rpa-delivery-close` for `migration-preview` and the explicitly confirmed `migrate-project-gates` operation. Never move or delete `.hermes/plugins/` or other Hermes Agent files.
 
 ## Template Expectations
 
@@ -110,7 +112,7 @@ Include:
 Suggested next action for the user:
 
 ```text
-先用 Trellis 建立工程 Task、用 Hermes 建立项目 Gate 并回读状态，再根据业务目标设计 input_{run_id}.json 的 tasks[].type 和 payload，确认调用契约后再写 handler。
+先用 Trellis 建立工程 Task、用 Project Gate Controller 建立项目 Gate 并回读状态，再根据业务目标设计 input_{run_id}.json 的 tasks[].type 和 payload，确认调用契约后再写 handler。
 ```
 
 ## Guardrails
@@ -118,5 +120,6 @@ Suggested next action for the user:
 - Do not keep the template `.git` history.
 - Do not commit real secrets.
 - Do not preserve runtime files such as root `input.json`, root `input_*.json`, `runner_*.json`, logs, crash snapshots, or data.
-- Do not create Gate progress in Trellis or Base records in the core initializer; hand off to the Hermes collaboration bootstrap layer.
+- Do not create Gate progress in Trellis or Base records in the core initializer; hand off to the Project Gate Controller collaboration bootstrap layer.
+- Do not create project Gate files under `.hermes/`; use `.project-gates/` so the project remains compatible with Hermes Agent and other harnesses.
 - Do not push to remote unless explicitly requested.
