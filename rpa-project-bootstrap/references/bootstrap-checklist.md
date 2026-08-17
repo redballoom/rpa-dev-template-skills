@@ -42,6 +42,16 @@ When the template supports them, initialization should run and report:
 
 The result appears in the initializer JSON under `post_init_checks`. A skipped check means the template is older or the user passed `--skip-post-checks`; it should be reported, not hidden.
 
+## Collaboration Bootstrap
+
+For a formal human/Agent project, verify after Trellis and Hermes initialization:
+
+- `.trellis/spec` exists and came from the pinned RPA registry.
+- `.trellis/config.yaml` contains active `session_auto_commit: false`.
+- `.hermes/project.json` starts at the accepted initial Gate.
+- `.hermes/gate-history.md` exists for append-only close and revalidation events.
+- Trellis Task metadata does not contain a second `current_gate` or Gate history.
+
 ## Next Step
 
 Do not start implementation directly. First design:

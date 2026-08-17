@@ -1,6 +1,7 @@
 import argparse
 import importlib.util
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -8,92 +9,60 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
-SCRIPT = SCRIPT_DIR / "rpa_collab.py"
+SCRIPT = SCRIPT_DIR / "hermes_controller.py"
 sys.path.insert(0, str(SCRIPT_DIR))
-SPEC = importlib.util.spec_from_file_location("rpa_collab", SCRIPT)
+SPEC = importlib.util.spec_from_file_location("hermes_controller", SCRIPT)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
 SPEC.loader.exec_module(MODULE)
 
 
-def write_task(task_dir: Path, *, status="in_progress", gate="G2", next_owner="agent", archived=False):
-    if archived:
-        task_dir = task_dir / "archive" / "2026-07" / "07-20-demo"
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.json").write_text(
-        json.dumps(
-            {
-                "id": "demo",
-                "status": status,
-                "meta": {
-                    "progress": {
-                        "schema_version": 1,
-                        "current_gate": gate,
-                        "current_work": "Current work",
-                        "latest_checkpoint": "Latest checkpoint",
-                        "next_action": "Next action",
-                        "next_owner": next_owner,
-                        "blocked": False,
-                        "block_reason": "",
-                        "updated_at": "2026-07-20T10:00:00+08:00",
-                        "checkpoint_id": "cp-existing",
-                        "evidence_refs": [],
-                    }
-                },
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
+def write_workspace(project_root: Path) -> None:
+    (project_root / ".trellis" / "spec").mkdir(parents=True, exist_ok=True)
+    (project_root / ".trellis" / "config.yaml").write_text(
+        "workspace:\n  developer: test\n# session_auto_commit: true\n",
         encoding="utf-8",
     )
+    write_task(
+        project_root,
+        "00-bootstrap-guidelines",
+        status="in_progress",
+        meta={},
+    )
+
+
+def write_task(
+    project_root: Path,
+    task_id: str = "demo-delivery",
+    *,
+    status: str = "planning",
+    meta: dict | None = None,
+    acceptance_criteria: list[str] | None = None,
+    technical_checks: list[str] | None = None,
+    commit: str | None = None,
+    pr_url: str | None = None,
+) -> Path:
+    task_dir = project_root / ".trellis" / "tasks" / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
+    data = {
+        "id": task_id,
+        "name": task_id,
+        "status": status,
+        "meta": meta or {},
+    }
+    if acceptance_criteria is not None:
+        data["acceptance_criteria"] = acceptance_criteria
+    if technical_checks is not None:
+        data["technical_checks"] = technical_checks
+    if commit is not None:
+        data["commit"] = commit
+    if pr_url is not None:
+        data["pr_url"] = pr_url
+    (task_dir / "task.json").write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     return task_dir
 
 
-def write_system_task_without_progress(task_dir: Path):
-    task_dir.mkdir(parents=True, exist_ok=True)
-    (task_dir / "task.json").write_text(
-        json.dumps(
-            {
-                "id": task_dir.name,
-                "name": task_dir.name,
-                "status": "in_progress",
-                "meta": {},
-            },
-            ensure_ascii=False,
-            indent=2,
-        ),
-        encoding="utf-8",
-    )
-
-
-def write_full_trellis_workspace(project_root: Path):
-    spec_dir = project_root / ".trellis" / "spec"
-    spec_dir.mkdir(parents=True, exist_ok=True)
-    (spec_dir / "README.md").write_text("# Test Spec\n", encoding="utf-8")
-
-
-def make_write_args(project_root: Path, **overrides):
-    values = {
-        "project_root": str(project_root),
-        "task": None,
-        "accepted_gate": "G2",
-        "gate": None,
-        "current_work": "G2 accepted",
-        "latest_checkpoint": "Contract confirmed",
-        "next_action": "Implement handler",
-        "next_owner": "agent",
-        "blocked": False,
-        "block_reason": "",
-        "evidence": ["docs/SHADOWBOT_INPUT_CONTRACT.md"],
-        "checkpoint_id": "cp-g2-close",
-        "timestamp": "2026-07-20T10:30:00+08:00",
-        "dry_run": False,
-    }
-    values.update(overrides)
-    return argparse.Namespace(**values)
-
-
-def make_bootstrap_args(project_root: Path, **overrides):
+def bootstrap_args(project_root: Path, **overrides: object) -> argparse.Namespace:
     values = {
         "project_root": str(project_root),
         "task": None,
@@ -101,204 +70,205 @@ def make_bootstrap_args(project_root: Path, **overrides):
         "task_id": "demo-delivery",
         "task_name": "Demo Delivery",
         "initial_gate": "G0",
-        "current_work": "Collaboration bootstrap initialized",
-        "latest_checkpoint": "Project ready for G0",
-        "next_action": "Align requirement scope",
-        "next_owner": "agent",
-        "evidence": ["AGENTS.md"],
-        "checkpoint_id": "cp-bootstrap",
-        "timestamp": "2026-07-20T09:00:00+08:00",
-        "dry_run": False,
+        "allow_minimal": False,
         "init_trellis": False,
         "trellis_cmd": None,
         "trellis_registry": MODULE.DEFAULT_TRELLIS_REGISTRY,
         "trellis_template": MODULE.DEFAULT_TRELLIS_TEMPLATE,
         "trellis_codex": True,
-        "allow_minimal": False,
+        "dry_run": False,
     }
     values.update(overrides)
     return argparse.Namespace(**values)
 
 
-class RpaCollabTests(unittest.TestCase):
-    def setUp(self):
+def gate_args(project_root: Path, **overrides: object) -> argparse.Namespace:
+    values = {
+        "project_root": str(project_root),
+        "task": "demo-delivery",
+        "accepted_gate": "G0",
+        "gate": "G2",
+        "evidence": ["AGENTS.md"],
+        "timestamp": "2026-08-14T10:00:00+08:00",
+        "event_id": "gate-close-g0-test",
+        "reason": "User accepted the scope",
+        "confirm_user_acceptance": True,
+        "dry_run": False,
+    }
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+class HermesControllerTests(unittest.TestCase):
+    def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.project_root = Path(self.temp_dir.name)
-        self.tasks_root = self.project_root / ".trellis" / "tasks"
+        write_workspace(self.project_root)
+        (self.project_root / "AGENTS.md").write_text("# Agents\n", encoding="utf-8")
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_status_reads_current_progress(self):
-        task_dir = write_task(self.tasks_root / "07-20-demo", gate="G3")
-        result = MODULE.build_status(self.project_root)
-        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
-        self.assertEqual(result["progress"]["current_gate"], "G3")
-        self.assertEqual(result["warnings"], [])
+    def init_git(self) -> str:
+        subprocess.run(["git", "init"], cwd=self.project_root, check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.project_root, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.project_root, check=True)
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=self.project_root, check=True)
+        subprocess.run(["git", "commit", "-m", "test evidence"], cwd=self.project_root, check=True, capture_output=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.project_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
 
-    def test_status_prefers_only_active_task_with_progress_gate(self):
-        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
-        task_dir = write_task(self.tasks_root / "07-20-demo", gate="G0")
-        result = MODULE.build_status(self.project_root)
-        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
-        self.assertEqual(result["task_id"], "demo")
+    def test_safe_config_is_explicit_and_idempotent(self) -> None:
+        first = MODULE.ensure_trellis_safe_config(self.project_root)
+        second = MODULE.ensure_trellis_safe_config(self.project_root)
+        text = (self.project_root / ".trellis" / "config.yaml").read_text(encoding="utf-8")
+        self.assertTrue(first["changed"])
+        self.assertFalse(second["changed"])
+        self.assertIn("workspace:\n", text)
+        self.assertEqual(text.count("session_auto_commit: false"), 1)
 
-    def test_status_prefers_only_progress_task_even_when_archived(self):
-        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
-        task_dir = write_task(self.tasks_root, status="completed", gate="G5", next_owner="none", archived=True)
-        result = MODULE.build_status(self.project_root)
-        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
-        self.assertEqual(result["task_status"], "completed")
-        self.assertTrue(result["archived"])
+    def test_published_schemas_are_valid_json(self) -> None:
+        references = Path(__file__).resolve().parents[1] / "references"
+        project_schema = json.loads((references / "hermes-project.schema.json").read_text(encoding="utf-8"))
+        delivery_schema = json.loads((references / "trellis-delivery.schema.json").read_text(encoding="utf-8"))
+        self.assertEqual(project_schema["properties"]["schema_version"]["const"], 1)
+        self.assertIn("archive_evidence", delivery_schema["properties"])
 
-    def test_suggest_recovery_when_completed_task_has_active_owner(self):
-        write_task(self.tasks_root / "07-20-demo", status="completed", gate="G5", next_owner="user")
-        status = MODULE.build_status(self.project_root)
-        suggestion = MODULE.suggest_action(status)
-        self.assertIn("lifecycle_drift", {warning["code"] for warning in status["warnings"]})
-        self.assertEqual(suggestion["recommended_action"], "recovery")
+    def test_bootstrap_creates_hermes_and_task_without_task_gate_state(self) -> None:
+        result = MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project = json.loads((self.project_root / ".hermes" / "project.json").read_text(encoding="utf-8"))
+        task = json.loads((self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(encoding="utf-8"))
+        self.assertEqual(project["current_gate"], "G0")
+        self.assertEqual(task["status"], "planning")
+        self.assertNotIn("progress", task["meta"])
+        self.assertFalse((self.project_root / ".trellis" / "tasks" / "demo-delivery" / "progress.md").exists())
+        self.assertTrue(result["trellis_config"]["verified"])
 
-    def test_bootstrap_requires_full_trellis_workspace_by_default(self):
+    def test_bootstrap_rejects_missing_explicit_task_instead_of_creating_another(self) -> None:
         with self.assertRaises(MODULE.CollabError):
-            MODULE.bootstrap_collaboration(make_bootstrap_args(self.project_root))
-
-    def test_bootstrap_creates_task_and_initial_progress_when_spec_exists(self):
-        write_full_trellis_workspace(self.project_root)
-        result = MODULE.bootstrap_collaboration(make_bootstrap_args(self.project_root))
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["created_task"])
-        self.assertTrue(result["initialized_progress"])
-        self.assertEqual(result["trellis_workspace"], "full")
-        self.assertEqual(result["status"]["progress"]["current_gate"], "G0")
-        self.assertEqual(result["status"]["progress"]["next_action"], "Align requirement scope")
-        self.assertEqual(result["suggestion"]["recommended_action"], "continue_current_gate")
-        self.assertTrue((self.tasks_root / "demo-delivery" / "progress.md").exists())
-
-    def test_bootstrap_is_idempotent_when_progress_exists(self):
-        write_full_trellis_workspace(self.project_root)
-        MODULE.bootstrap_collaboration(make_bootstrap_args(self.project_root))
-        result = MODULE.bootstrap_collaboration(
-            make_bootstrap_args(
-                self.project_root,
-                initial_gate="G1",
-                current_work="Different work that should not overwrite",
-                checkpoint_id="cp-bootstrap-second",
+            MODULE.bootstrap_collaboration(
+                bootstrap_args(self.project_root, task="missing-task", task_id="unexpected-task")
             )
+        self.assertFalse(
+            (self.project_root / ".trellis" / "tasks" / "unexpected-task" / "task.json").exists()
         )
-        self.assertTrue(result["ok"])
-        self.assertFalse(result["initialized_progress"])
-        self.assertEqual(result["status"]["progress"]["current_gate"], "G0")
-        self.assertEqual(result["status"]["progress"]["current_work"], "Collaboration bootstrap initialized")
-        history = (self.tasks_root / "demo-delivery" / "progress.md").read_text(encoding="utf-8")
-        self.assertNotIn("cp-bootstrap-second", history)
 
-    def test_bootstrap_allows_minimal_only_when_explicit(self):
-        result = MODULE.bootstrap_collaboration(make_bootstrap_args(self.project_root, allow_minimal=True))
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["trellis_workspace"], "minimal")
-        self.assertTrue(result["created_task"])
+    def test_status_combines_hermes_task_git_runner_and_detects_legacy(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        task_file = self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json"
+        task = json.loads(task_file.read_text(encoding="utf-8"))
+        task["meta"]["progress"] = {"current_gate": "G0"}
+        task_file.write_text(json.dumps(task), encoding="utf-8")
+        (self.project_root / "runner_demo.json").write_text('{"run_id":"demo","status":"success"}', encoding="utf-8")
+        status = MODULE.build_status(self.project_root)
+        self.assertEqual(status["hermes"]["current_gate"], "G0")
+        self.assertEqual(status["selected_task"]["id"], "demo-delivery")
+        self.assertEqual(status["runner"]["status"], "success")
+        self.assertIn("legacy_gate_records", {item["code"] for item in status["warnings"]})
 
-    def test_bootstrap_init_trellis_dry_run_plans_command(self):
-        result = MODULE.bootstrap_collaboration(
-            make_bootstrap_args(self.project_root, init_trellis=True, trellis_cmd="trellis.cmd", dry_run=True)
-        )
-        self.assertTrue(result["ok"])
-        self.assertTrue(result["dry_run"])
-        self.assertEqual(result["trellis_workspace"], "full")
-        self.assertEqual(result["trellis_init"]["command"][:2], ["trellis.cmd", "init"])
-
-    def test_gate_close_checks_saved_gate_before_writing(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G2")
-        result = MODULE.close_gate(make_write_args(self.project_root))
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G3")
-        history = (self.tasks_root / "07-20-demo" / "progress.md").read_text(encoding="utf-8")
-        self.assertIn("Accepted Gate: `G2`", history)
-
-    def test_gate_close_writes_status_selected_delivery_task(self):
-        write_system_task_without_progress(self.tasks_root / "00-bootstrap-guidelines")
-        task_dir = write_task(self.tasks_root / "07-20-demo", gate="G2")
-        result = MODULE.close_gate(make_write_args(self.project_root))
-        self.assertEqual(Path(result["task_file"]).resolve(), (task_dir / "task.json").resolve())
-        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G3")
-
-    def test_gate_close_rejects_stale_acceptance(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G3")
+    def test_gate_close_requires_explicit_confirmation(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         with self.assertRaises(MODULE.CollabError):
-            MODULE.close_gate(make_write_args(self.project_root, accepted_gate="G2"))
+            MODULE.close_gate(gate_args(self.project_root, confirm_user_acceptance=False))
 
-    def test_checkpoint_keeps_saved_gate_and_reads_back(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G3")
-        args = make_write_args(
-            self.project_root,
-            current_work="Implementation in progress",
-            latest_checkpoint="Unit tests pass",
-            next_action="Run dry-run",
-            checkpoint_id="cp-g3-progress",
-        )
-        result = MODULE.record_checkpoint(args)
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["progress"]["current_gate"], "G3")
-        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G3")
+    def test_gate_close_advances_hermes_without_writing_task_progress(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        result = MODULE.close_gate(gate_args(self.project_root))
+        task = json.loads((self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(encoding="utf-8"))
+        history = (self.project_root / ".hermes" / "gate-history.md").read_text(encoding="utf-8")
+        self.assertEqual(result["read_back"]["current_gate"], "G1")
+        self.assertIn("- event: gate-close", history)
+        self.assertIn("- gate: G0", history)
+        self.assertNotIn("progress", task["meta"])
 
-    def test_checkpoint_records_blocker_and_owner(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G4")
-        args = make_write_args(
-            self.project_root,
-            current_work="Waiting for ShadowBot integration",
-            latest_checkpoint="Python runner is ready",
-            next_action="Provide a real integration run",
-            next_owner="user",
-            blocked=True,
-            block_reason="ShadowBot must be operated by the user",
-            checkpoint_id="cp-g4-blocked",
-        )
-        result = MODULE.record_checkpoint(args)
-        progress = result["read_back"]["progress"]
-        self.assertEqual(progress["current_gate"], "G4")
-        self.assertTrue(progress["blocked"])
-        self.assertEqual(progress["next_owner"], "user")
-
-    def test_recovery_calibrates_archived_g5_progress(self):
-        write_task(self.tasks_root, status="completed", gate="G5", next_owner="user", archived=True)
-        args = make_write_args(
-            self.project_root,
-            gate="G5",
-            current_work="Historical delivery calibrated",
-            latest_checkpoint="Archived delivery has no remaining action",
-            next_action="No further local action",
-            next_owner="none",
-            checkpoint_id="cp-g5-recovery",
-        )
-        result = MODULE.recover_progress(args)
-        self.assertTrue(result["read_back"]["archived"])
-        self.assertEqual(result["read_back"]["progress"]["next_owner"], "none")
-        warning_codes = {warning["code"] for warning in result["read_back"]["warnings"]}
-        self.assertNotIn("lifecycle_drift", warning_codes)
-        self.assertNotIn("archive_drift", warning_codes)
-
-    def test_finish_aligns_g5_progress_and_completed_status(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G5")
-        args = make_write_args(
-            self.project_root,
-            accepted_gate="G5",
-            current_work="Final calibration complete",
-            latest_checkpoint="User accepted delivery",
-            next_action="No further local action",
-            evidence=["runner_g5.json", "commit:abc1234"],
-            checkpoint_id="cp-g5-finish",
-        )
-        result = MODULE.finish(args)
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["read_back"]["task_status"], "completed")
-        self.assertEqual(result["read_back"]["progress"]["current_gate"], "G5")
-        self.assertEqual(result["read_back"]["progress"]["next_owner"], "none")
-        self.assertNotIn("lifecycle_drift", {warning["code"] for warning in result["read_back"]["warnings"]})
-
-    def test_finish_requires_g5(self):
-        write_task(self.tasks_root / "07-20-demo", gate="G4")
+    def test_gate_close_rejects_second_close_of_same_gate(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root))
         with self.assertRaises(MODULE.CollabError):
-            MODULE.finish(make_write_args(self.project_root))
+            MODULE.close_gate(gate_args(self.project_root, event_id="second"))
+
+    def test_g5_close_becomes_operational_and_revalidation_keeps_g5(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".hermes" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["current_gate"] = "G5"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        close_result = MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="g5-close"))
+        self.assertEqual(close_result["read_back"]["status"], "operational")
+        revalidate = gate_args(
+            self.project_root,
+            gate="G2",
+            reason="Major contract change accepted",
+            event_id="g2-revalidation",
+        )
+        result = MODULE.revalidate_gate(revalidate)
+        self.assertEqual(result["read_back"]["current_gate"], "G5")
+        self.assertTrue(result["current_gate_unchanged"])
+        with self.assertRaises(MODULE.CollabError):
+            MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="g5-second-close"))
+
+    def test_archive_guard_rejects_missing_contract_and_evidence(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertFalse(result["ready"])
+        self.assertEqual(
+            set(result["missing"]),
+            {"acceptance_criteria", "technical_checks", "commit", "final_summary"},
+        )
+
+    def test_archive_guard_passes_configured_requirements(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        commit = self.init_git()
+        meta = {
+            "delivery_requirements": {
+                "require_pr": True,
+                "require_runner": True,
+                "require_user_acceptance": True,
+            },
+            "archive_evidence": {
+                "acceptance_criteria": [
+                    {"id": "AC1", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                ],
+                "technical_checks": [
+                    {"name": "unit tests", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                ],
+                "commit": commit,
+                "pr_url": "https://example.test/pr/1",
+                "runner_refs": ["runner_delivery.json"],
+                "user_acceptance": True,
+                "final_summary": "Contract and implementation evidence verified.",
+            },
+        }
+        write_task(
+            self.project_root,
+            meta=meta,
+        )
+        (self.project_root / "runner_delivery.json").write_text('{"status":"success"}', encoding="utf-8")
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=True)
+        result = MODULE.archive_check(args)
+        self.assertTrue(result["ready"])
+        self.assertEqual(result["missing"], [])
+
+    def test_archive_guard_rejects_already_completed_task(self) -> None:
+        write_task(self.project_root, status="completed")
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertIn("task_already_archived", result["missing"])
+
+    def test_migration_preview_never_writes_hermes(self) -> None:
+        task_dir = write_task(self.project_root, meta={"progress": {"current_gate": "G3"}})
+        (task_dir / "progress.md").write_text("# Legacy\n", encoding="utf-8")
+        args = argparse.Namespace(project_root=str(self.project_root))
+        result = MODULE.migration_preview(args)
+        self.assertFalse(result["write_performed"])
+        self.assertEqual(len(result["legacy_records"]), 2)
+        self.assertFalse((self.project_root / ".hermes").exists())
 
 
 if __name__ == "__main__":

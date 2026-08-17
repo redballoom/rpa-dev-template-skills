@@ -10,24 +10,31 @@ Use this checklist before closing an RPA project or telling the user the deliver
 - `tasks[].type`, payload, output, status, exception semantics, and acceptance examples are known.
 - The user explicitly confirmed the contract before implementation, or the final report clearly says this was a legacy or recovery project without prior contract confirmation.
 
-## 2. Trellis Or Harness
+## 2. Hermes And Trellis
 
-When Trellis is present:
+Hermes:
+
+- `.hermes/project.json` contains the only project `current_gate`.
+- `.hermes/gate-history.md` contains the accepted Gate close or revalidation event when applicable.
+- The Gate event references evidence rather than copying its content.
+- G5 maintenance keeps `current_gate=G5`; major changes append revalidation events.
+
+Trellis:
 
 - The active task is identified.
 - `prd.md` reflects the accepted scope.
 - `design.md` is present when the project was complex enough to need design.
 - `implement.md` or equivalent implementation plan reflects what was actually built.
 - The task links to relevant commits, runner evidence, and acceptance conclusion.
-- `task.json.meta.progress` reflects the current Gate, next action, owner, blocker, and evidence.
-- Task-local `progress.md` contains the latest accepted or recovery checkpoint.
-- The task is ready to complete or archive after user approval.
+- The Task does not contain `meta.progress.current_gate` or Task-local Gate history.
+- `meta.delivery_state` and `meta.delivery_requirements` contain only Task-owned delivery facts.
+- `archive-check` returns `ready=true` before Trellis archive.
 
 When Trellis is absent:
 
-- Do not block delivery only because Trellis is absent.
-- Use project docs, Git, runner evidence, and user acceptance as the record.
-- State that the current Harness did not provide Trellis task evidence.
+- Do not claim a formal Task archive.
+- Use Hermes, project docs, Git, runner evidence, and user acceptance to report what is known.
+- State that the project did not provide Trellis Task evidence.
 
 ## 3. Git
 
@@ -58,15 +65,16 @@ When Trellis is absent:
 - User checked the real business target or accepted output sample.
 - External writes, deletes, or overwrites were explicitly authorized when involved.
 
-## 6. Local Progress
+## 6. Recovery State
 
-- Local Trellis progress is sufficient to recover the project without chat or Base.
-- The final checkpoint uses G5, `next_owner=none`, and names any remaining risk.
-- Recovery entries are labeled as recovery rather than backdated as historical Gate events.
+- Hermes, Trellis, Git/PR, and runner facts are sufficient to recover without chat or Base.
+- `session_auto_commit: false` is explicitly active in `.trellis/config.yaml`.
+- The final Task summary names remaining risk and evidence.
+- Migration or recovery events are labeled honestly rather than backdated as historical Gate closes.
 
-## 7. Optional Base Milestones
+## 7. Optional Base Projection
 
-When a management Base is configured, prepare or sync only five high-value events. These events may be recorded as they happen; they do not need to wait until final project closure. Skip this section for a deliberately local-only project.
+When a management Base is configured, project only high-value accepted facts. Skip this section for a deliberately local-only project. Base is not a Gate or Task writer.
 
 1. `PRD 待确认`
 2. `允许开发`
@@ -86,11 +94,12 @@ Each event should have:
 - artifact references
 - acceptance result
 - idempotency key
+- authoritative source references
 
 ## 8. Close Decision
 
 Use one of three conclusions:
 
-- `ready`: all required evidence is present; closure can proceed after any required user approval.
+- `ready`: all required evidence is present and `archive-check` passed; closure can proceed after any required authorization.
 - `needs_user_review`: evidence exists, but the user must confirm business acceptance, write authorization, commit, archive, or Base update.
 - `blocked`: required evidence is missing or failed; name the blocker and the smallest next action.

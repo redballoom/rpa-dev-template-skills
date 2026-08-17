@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://redballoom.github.io/schemas/trellis-delivery.schema.json",
+  "title": "Hermes Extension For Trellis Task Delivery Metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "delivery_state": {
+      "enum": ["paused", "blocked", "in_review", "cancelled"]
+    },
+    "delivery_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "require_pr": {"type": "boolean"},
+        "require_runner": {"type": "boolean"},
+        "require_user_acceptance": {"type": "boolean"}
+      }
+    },
+    "archive_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptance_criteria",
+        "technical_checks",
+        "commit",
+        "final_summary"
+      ],
+      "properties": {
+        "acceptance_criteria": {
+          "$ref": "#/$defs/results"
+        },
+        "technical_checks": {
+          "$ref": "#/$defs/results"
+        },
+        "commit": {"type": "string", "minLength": 1},
+        "pr_url": {"type": "string", "minLength": 1},
+        "runner_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "user_acceptance": {"type": "boolean"},
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "final_summary": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "$defs": {
+    "results": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["result", "evidence_refs"],
+        "properties": {
+          "result": {
+            "enum": ["passed", "accepted", "met", "complete", "completed"]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  }
+}
