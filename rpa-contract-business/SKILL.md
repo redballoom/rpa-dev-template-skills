@@ -28,11 +28,19 @@ Read these project files:
    - ShadowBot: UI, login, download, upload, manual confirmation, calling `run.bat`.
    - Python: deterministic data processing, validation, file output, structured status.
    - AI: Python code, tests, examples, docs.
-3. Draft the contract before coding.
-4. Wait for user confirmation before handler implementation.
-5. Implement handler only after the contract is clear.
-6. Add tests and examples.
-7. Run `python -m pytest tests/ -v` when possible.
+3. Confirm delivery requirements from the Issue or user instruction:
+   - If the user explicitly requires branch-based work with review-then-merge
+     (e.g. "新分支开发，验收后合并关闭"), set `meta.delivery_requirements.require_pr=true`
+     in the Trellis Task and record the branch convention (default `codex/<task-slug>`).
+   - Otherwise, new-project development defaults to `require_pr=false`
+     (direct commits on main); user acceptance and runner evidence stay mandatory.
+   - Write the decision into the contract draft so it is confirmed together
+     with the business contract.
+4. Draft the contract before coding.
+5. Wait for user confirmation before handler implementation.
+6. Implement handler only after the contract is clear.
+7. Add tests and examples.
+8. Run `python -m pytest tests/ -v` when possible.
 
 ## Contract Draft Format
 
@@ -90,6 +98,7 @@ Include:
 - Test command and result.
 - Remaining manual checks.
 - Whether the contract is awaiting confirmation or implementation is complete.
+- Whether PR delivery was required (`require_pr`) and the working branch name.
 
 Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
 
