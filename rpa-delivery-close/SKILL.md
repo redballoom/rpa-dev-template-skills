@@ -185,6 +185,8 @@ Recommended Task metadata:
 }
 ```
 
+`require_pr` defaults to `false`. Set it to `true` only when the Issue or user instruction explicitly requires branch-based delivery with PR merge.
+
 If the guard returns `ready=false`, do not call Trellis archive. Report the exact missing items and the smallest next action. A raw Trellis archive never closes a Project Gate, closes an Issue, merges a PR, or publishes a release.
 
 ## Migration
