@@ -28,14 +28,23 @@ Read these project files:
    - ShadowBot: UI, login, download, upload, manual confirmation, calling `run.bat`.
    - Python: deterministic data processing, validation, file output, structured status.
    - AI: Python code, tests, examples, docs.
-3. Confirm delivery requirements from the Issue or user instruction:
-   - If the user explicitly requires branch-based work with review-then-merge
-     (e.g. "新分支开发，验收后合并关闭"), set `meta.delivery_requirements.require_pr=true`
-     in the Trellis Task and record the branch convention (default `codex/<task-slug>`).
-   - Otherwise, new-project development defaults to `require_pr=false`
-     (direct commits on main); user acceptance and runner evidence stay mandatory.
-   - Write the decision into the contract draft so it is confirmed together
-     with the business contract.
+3. Confirm all delivery requirements from the Issue, project risk, and user instruction:
+   - Write all three booleans explicitly in the Trellis Task:
+     `require_pr`, `require_runner`, and `require_user_acceptance`.
+     Missing values are an incomplete G2 delivery contract, not implicit `false`.
+   - Set `require_pr=true` when the user explicitly requires review-then-merge or
+     when the change is high risk, such as auth/secrets, destructive data changes,
+     deployment or runtime infrastructure, shared contract/schema changes, or a
+     broad cross-module refactor. Record the branch convention (default
+     `codex/<task-slug>`).
+   - Otherwise set `require_pr=false`. This removes `pr_url` from archive evidence;
+     it does not require direct commits to `main`. Choose branch isolation from
+     project risk and repository policy.
+   - RPA business delivery normally sets `require_runner=true` and
+     `require_user_acceptance=true`. Set either to `false` only when it is genuinely
+     inapplicable, and record the reason in the contract or Task notes.
+   - Write the complete decision into the contract draft so it is confirmed
+     together with the business contract.
 4. Draft the contract before coding.
 5. Wait for user confirmation before handler implementation.
 6. Implement handler only after the contract is clear.
@@ -71,6 +80,13 @@ Read these project files:
 - retryable:
 - fix_target:
 
+### 交付要求
+- require_pr: true | false
+- require_runner: true | false
+- require_user_acceptance: true | false
+- working_branch:
+- decision_reason:
+
 ### 验收
 - sample input:
 - expected output:
@@ -98,7 +114,7 @@ Include:
 - Test command and result.
 - Remaining manual checks.
 - Whether the contract is awaiting confirmation or implementation is complete.
-- Whether PR delivery was required (`require_pr`) and the working branch name.
+- The three confirmed delivery requirements, working branch, and decision reason.
 
 Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
 

@@ -28,7 +28,10 @@ Trellis:
 - `implement.md` or equivalent implementation plan reflects what was actually built.
 - The task links to relevant commits, runner evidence, and acceptance conclusion.
 - The Task does not contain `meta.progress.current_gate` or Task-local Gate history.
-- `meta.delivery_state` and `meta.delivery_requirements` contain only Task-owned delivery facts.
+- `meta.delivery_state` contains only Task-owned delivery state.
+- `meta.delivery_requirements` explicitly records boolean `require_pr`,
+  `require_runner`, and `require_user_acceptance`; no requirement is inferred from
+  a missing field.
 - `archive-check` returns `ready=true` before Trellis archive.
 
 When Trellis is absent:

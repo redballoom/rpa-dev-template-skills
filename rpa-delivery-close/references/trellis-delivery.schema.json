@@ -11,6 +11,11 @@
     "delivery_requirements": {
       "type": "object",
       "additionalProperties": false,
+      "required": [
+        "require_pr",
+        "require_runner",
+        "require_user_acceptance"
+      ],
       "properties": {
         "require_pr": {"type": "boolean"},
         "require_runner": {"type": "boolean"},

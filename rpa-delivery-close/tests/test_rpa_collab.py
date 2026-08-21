@@ -156,6 +156,10 @@ class ProjectGateControllerTests(unittest.TestCase):
         delivery_schema = json.loads((references / "trellis-delivery.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(project_schema["properties"]["schema_version"]["const"], 1)
         self.assertIn("archive_evidence", delivery_schema["properties"])
+        self.assertEqual(
+            set(delivery_schema["properties"]["delivery_requirements"]["required"]),
+            {"require_pr", "require_runner", "require_user_acceptance"},
+        )
 
     def test_bootstrap_creates_project_gate_and_task_without_task_gate_state(self) -> None:
         result = MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
@@ -237,8 +241,113 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertEqual(
             set(result["missing"]),
-            {"acceptance_criteria", "technical_checks", "commit", "final_summary"},
+            {
+                "acceptance_criteria",
+                "technical_checks",
+                "commit",
+                "delivery_requirements",
+                "final_summary",
+            },
         )
+
+    def test_archive_guard_rejects_incomplete_delivery_requirements(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_requirements": {
+                    "require_pr": False,
+                    "require_runner": "false",
+                }
+            },
+        )
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertIn("delivery_requirements.require_runner", result["missing"])
+        self.assertIn("delivery_requirements.require_user_acceptance", result["missing"])
+
+    def test_archive_guard_allows_explicit_false_pr_without_pr_url(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        commit = self.init_git()
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_requirements": {
+                    "require_pr": False,
+                    "require_runner": False,
+                    "require_user_acceptance": False,
+                },
+                "archive_evidence": {
+                    "acceptance_criteria": [
+                        {"id": "AC1", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "technical_checks": [
+                        {"name": "docs", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "commit": commit,
+                    "final_summary": "Explicitly approved delivery requirements need no PR evidence.",
+                },
+            },
+        )
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertTrue(result["ready"])
+        self.assertNotIn("pr_url", result["missing"])
+
+    def test_archive_guard_requires_pr_url_when_pr_is_required(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        commit = self.init_git()
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_requirements": {
+                    "require_pr": True,
+                    "require_runner": False,
+                    "require_user_acceptance": False,
+                },
+                "archive_evidence": {
+                    "acceptance_criteria": [
+                        {"id": "AC1", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "technical_checks": [
+                        {"name": "unit tests", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "commit": commit,
+                    "final_summary": "Implementation is ready for PR review.",
+                },
+            },
+        )
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertFalse(result["ready"])
+        self.assertEqual(result["missing"], ["pr_url"])
+
+    def test_archive_guard_enforces_runner_and_user_acceptance_requirements(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        commit = self.init_git()
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_requirements": {
+                    "require_pr": False,
+                    "require_runner": True,
+                    "require_user_acceptance": True,
+                },
+                "archive_evidence": {
+                    "acceptance_criteria": [
+                        {"id": "AC1", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "technical_checks": [
+                        {"name": "unit tests", "result": "passed", "evidence_refs": ["AGENTS.md"]}
+                    ],
+                    "commit": commit,
+                    "final_summary": "Technical work is complete; target evidence is pending.",
+                },
+            },
+        )
+        args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
+        result = MODULE.archive_check(args)
+        self.assertEqual(set(result["missing"]), {"runner_evidence", "user_acceptance"})
 
     def test_archive_guard_passes_configured_requirements(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))

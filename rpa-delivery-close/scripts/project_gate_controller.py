@@ -626,12 +626,24 @@ def archive_check(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
     task_file, task = match_task(project_root, args.task)
     meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
-    requirements = meta.get("delivery_requirements") if isinstance(meta.get("delivery_requirements"), dict) else {}
+    raw_requirements = meta.get("delivery_requirements")
+    requirements = raw_requirements if isinstance(raw_requirements, dict) else {}
     archive = meta.get("archive_evidence") if isinstance(meta.get("archive_evidence"), dict) else {}
     ac = archive.get("acceptance_criteria") or task.get("acceptance_criteria") or meta.get("acceptance_criteria")
     checks = archive.get("technical_checks") or task.get("technical_checks") or meta.get("technical_checks")
     evidence = archive.get("evidence_refs") or task.get("evidence_refs") or meta.get("evidence_refs") or []
     missing: list[str] = []
+    required_requirement_keys = (
+        "require_pr",
+        "require_runner",
+        "require_user_acceptance",
+    )
+    if not isinstance(raw_requirements, dict):
+        missing.append("delivery_requirements")
+    else:
+        for key in required_requirement_keys:
+            if not isinstance(raw_requirements.get(key), bool):
+                missing.append(f"delivery_requirements.{key}")
     try:
         read_project_gate(project_root)
     except CollabError:

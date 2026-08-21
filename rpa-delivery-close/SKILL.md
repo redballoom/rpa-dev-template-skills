@@ -150,6 +150,7 @@ python <skill-dir>\scripts\rpa_collab.py `
 The Task should provide:
 
 - valid Project Gate Controller project state and explicit `session_auto_commit: false`;
+- all three boolean fields under `meta.delivery_requirements`;
 - `meta.archive_evidence.acceptance_criteria` entries with accepted result and evidence references;
 - `meta.archive_evidence.technical_checks` entries with passed result and evidence references;
 - a Git commit that exists locally;
@@ -185,9 +186,24 @@ Recommended Task metadata:
 }
 ```
 
-`require_pr` defaults to `false`. Set it to `true` only when the Issue or user instruction explicitly requires branch-based delivery with PR merge.
+All three delivery requirements must be explicit. Missing fields are an incomplete
+G2 delivery contract and make the archive guard fail; they never default to
+`false` during archive.
+
+Set `require_pr=true` when the Issue or user instruction requires review-then-merge,
+or when project risk requires review isolation. `require_pr=false` means only that
+`pr_url` is not required archive evidence. It does not prescribe direct commits to
+`main`; branch isolation still follows project risk and repository policy.
+
+RPA business delivery normally requires runner evidence and user acceptance. Set
+either requirement to `false` only when it is genuinely inapplicable and the reason
+is recorded in the confirmed contract or Task notes.
 
 If the guard returns `ready=false`, do not call Trellis archive. Report the exact missing items and the smallest next action. A raw Trellis archive never closes a Project Gate, closes an Issue, merges a PR, or publishes a release.
+
+For an older Task missing delivery requirements, present the three decisions for
+user confirmation and then backfill them in the Task. Never auto-fill legacy fields
+from whether a PR or runner file happens to exist.
 
 ## Migration
 
