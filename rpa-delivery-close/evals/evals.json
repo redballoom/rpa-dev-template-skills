@@ -48,6 +48,19 @@
         "The response proposes a G2 gate-revalidation only after explicit acceptance.",
         "The response keeps Project Gate Controller current_gate at G5."
       ]
+    },
+    {
+      "id": 5,
+      "prompt": "项目保持 G5。Issue #42 是一次外部契约重大变更，需要重新确认契约、做 PR、影刀验证和业务验收。请记录本次路线，但不要让旧 Task 失效。",
+      "expected_output": "Agent 将本次 Issue 路线记录为可选的 Task-owned delivery_route，从 G2 复核到 G5，保持项目 current_gate=G5，并说明旧 Task 无路线时继续兼容。",
+      "files": [],
+      "expectations": [
+        "The response keeps the project current_gate at G5.",
+        "The response records an Issue-scoped delivery_route under Trellis Task metadata.",
+        "The response does not use Trellis set-meta to store the structured route.",
+        "The response treats missing delivery_route on legacy Tasks as compatible.",
+        "The response requires separate acceptance before each actual Project Gate revalidation."
+      ]
     }
   ]
 }

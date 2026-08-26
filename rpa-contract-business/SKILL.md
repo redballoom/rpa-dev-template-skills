@@ -45,6 +45,16 @@ Read these project files:
      inapplicable, and record the reason in the contract or Task notes.
    - Write the complete decision into the contract draft so it is confirmed
      together with the business contract.
+   - Classify the Issue-scoped delivery route separately from the project Gate:
+     `change_class`, `entry`, `required_reviews`, and any operational-G5
+     `project_revalidations`. The route may use only G2-G5 review meanings and
+     must never copy or replace `current_gate`.
+   - Use G3 as the normal maintenance entry when the existing contract remains
+     valid. Start at G2 when the Issue changes an input/output contract,
+     compatibility policy, scope boundary, or acceptance baseline. Include G4
+     when runner evidence is required and G5 when business acceptance is required.
+   - Existing Tasks without `meta.delivery_route` remain valid. Do not infer and
+     backfill a legacy route without user confirmation.
 4. Draft the contract before coding.
 5. Wait for user confirmation before handler implementation.
 6. Implement handler only after the contract is clear.
@@ -87,6 +97,14 @@ Read these project files:
 - working_branch:
 - decision_reason:
 
+### 本次交付路线（不改变项目 current_gate）
+- change_class:
+- entry: G2 | G3 | G4 | G5
+- required_reviews: []
+- completed_reviews: []
+- project_revalidations: []
+- route_reason:
+
 ### 验收
 - sample input:
 - expected output:
@@ -115,6 +133,7 @@ Include:
 - Remaining manual checks.
 - Whether the contract is awaiting confirmation or implementation is complete.
 - The three confirmed delivery requirements, working branch, and decision reason.
+- The confirmed Issue-scoped delivery route, or that the legacy Task has no route and remains compatible.
 
 Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
 
@@ -123,8 +142,15 @@ Do not start implementation on your own. Wait for an explicit user confirmation 
 After explicit contract confirmation, hand off to `rpa-delivery-close` before implementation:
 
 1. Run `status` / `suggest` against the local Trellis delivery task.
-2. If the saved Gate is G2, present the contract evidence and record the accepted G2 Gate through `gate-close` after the user confirms it should be recorded.
-3. If the saved Gate differs from the conversation, use a checkpoint or explicit recovery instead of forcing G2 closed.
-4. Start implementation only after the local progress write succeeds and reads back at G3.
+2. After the route is explicitly confirmed, use `delivery-route-set` from
+   `rpa-delivery-close`; do not use Trellis `set-meta` for the structured object.
+3. For an initial project currently at G2, present the contract evidence and
+   record the accepted G2 Gate through `gate-close` after the user confirms it;
+   verify the Project Gate read-back at G3 before implementation.
+4. For an operational G5 project, keep the Project Gate at G5 and proceed only
+   after the confirmed delivery route is written and read back. Do not rewind it
+   to the route entry.
+5. If the saved Gate differs from the conversation, use an explicit recovery
+   checkpoint instead of forcing G2 closed.
 
 This handoff keeps contract approval, implementation permission, and the durable project state aligned without making Base a dependency.

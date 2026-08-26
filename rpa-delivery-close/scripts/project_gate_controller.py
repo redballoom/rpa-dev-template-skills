@@ -25,6 +25,7 @@ GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
 NEXT_GATE = {"G0": "G1", "G1": "G2", "G2": "G3", "G3": "G4", "G4": "G5", "G5": "G5"}
 PROJECT_STATUSES = ("active", "operational", "archived", "terminated")
 DELIVERY_STATES = ("paused", "blocked", "in_review", "cancelled")
+DELIVERY_REVIEWS = ("G2", "G3", "G4", "G5")
 DEFAULT_TRELLIS_REGISTRY = "gh:redballoom/rpa-trellis-spec-templates"
 DEFAULT_TRELLIS_TEMPLATE = "rpa-python-shadowbot"
 SYSTEM_TASK_IDS = {"00-bootstrap-guidelines"}
@@ -299,6 +300,128 @@ def match_task(project_root: Path, task_input: str | None) -> tuple[Path, dict[s
     raise CollabError("No engineering Task found; pass --task explicitly")
 
 
+def ordered_reviews(values: list[str] | tuple[str, ...]) -> list[str]:
+    selected = set(values)
+    return [gate for gate in DELIVERY_REVIEWS if gate in selected]
+
+
+def validate_delivery_route(route: Any, project: dict[str, Any] | None = None) -> dict[str, Any]:
+    if not isinstance(route, dict):
+        raise CollabError("delivery_route must be a JSON object, not a Trellis set-meta string")
+    allowed = {
+        "change_class",
+        "entry",
+        "required_reviews",
+        "completed_reviews",
+        "project_revalidations",
+    }
+    unknown = sorted(set(route) - allowed)
+    if unknown:
+        raise CollabError(f"delivery_route has unsupported fields: {', '.join(unknown)}")
+    change_class = route.get("change_class")
+    if not isinstance(change_class, str) or not change_class.strip() or "\n" in change_class:
+        raise CollabError("delivery_route.change_class must be a non-empty one-line string")
+
+    def reviews(field: str, *, required: bool = False) -> list[str]:
+        value = route.get(field)
+        if not isinstance(value, list) or (required and not value):
+            qualifier = "a non-empty array" if required else "an array"
+            raise CollabError(f"delivery_route.{field} must be {qualifier}")
+        if any(item not in DELIVERY_REVIEWS for item in value):
+            raise CollabError(f"delivery_route.{field} may contain only G2, G3, G4, and G5")
+        if len(value) != len(set(value)):
+            raise CollabError(f"delivery_route.{field} must not contain duplicates")
+        return ordered_reviews(value)
+
+    required_reviews = reviews("required_reviews", required=True)
+    completed_reviews = reviews("completed_reviews")
+    project_revalidations = reviews("project_revalidations")
+    entry = route.get("entry")
+    if entry not in DELIVERY_REVIEWS:
+        raise CollabError("delivery_route.entry must be one of G2, G3, G4, or G5")
+    if entry != required_reviews[0]:
+        raise CollabError("delivery_route.entry must equal the first required review")
+    if not set(completed_reviews).issubset(required_reviews):
+        raise CollabError("delivery_route.completed_reviews must be a subset of required_reviews")
+    if not set(project_revalidations).issubset(required_reviews):
+        raise CollabError("delivery_route.project_revalidations must be a subset of required_reviews")
+    if project_revalidations and (not project or project.get("current_gate") != "G5" or project.get("status") != "operational"):
+        raise CollabError("project_revalidations are available only for an operational G5 project")
+    return {
+        "change_class": change_class.strip(),
+        "entry": entry,
+        "required_reviews": required_reviews,
+        "completed_reviews": completed_reviews,
+        "project_revalidations": project_revalidations,
+    }
+
+
+def check_delivery_route(project_root: Path, task_input: str | None = None) -> dict[str, Any]:
+    project_root = project_root.resolve()
+    task_file, task = match_task(project_root, task_input)
+    meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
+    route = meta.get("delivery_route")
+    if route is None:
+        return {
+            "ok": True,
+            "present": False,
+            "task_file": str(task_file),
+            "task_id": task_id(task_file, task),
+            "delivery_route": None,
+            "legacy_compatible": True,
+        }
+    project = read_project_gate(project_root, required=False)
+    normalized = validate_delivery_route(route, project)
+    return {
+        "ok": True,
+        "present": True,
+        "task_file": str(task_file),
+        "task_id": task_id(task_file, task),
+        "delivery_route": normalized,
+        "project_gate_unchanged": True,
+    }
+
+
+def set_delivery_route(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.confirm_delivery_route:
+        raise CollabError("Refusing to write delivery_route without --confirm-delivery-route")
+    project_root = Path(args.project_root).resolve()
+    project = read_project_gate(project_root)
+    task_file, task = match_task(project_root, args.task)
+    if is_archive_path(task_file, project_root / ".trellis" / "tasks"):
+        raise CollabError("Refusing to change delivery_route on an archived Task")
+    route = validate_delivery_route(
+        {
+            "change_class": args.change_class,
+            "entry": args.entry,
+            "required_reviews": args.require_review,
+            "completed_reviews": args.complete_review,
+            "project_revalidations": args.project_revalidation,
+        },
+        project,
+    )
+    meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
+    before = meta.get("delivery_route")
+    if not args.dry_run:
+        task["meta"] = {**meta, "delivery_route": route}
+        write_json_atomic(task_file, task)
+        read_back = check_delivery_route(project_root, task_id(task_file, task))["delivery_route"]
+        if read_back != route:
+            raise CollabError("delivery_route read-back verification failed")
+    else:
+        read_back = route
+    return {
+        "ok": True,
+        "task_file": str(task_file),
+        "task_id": task_id(task_file, task),
+        "before": before,
+        "delivery_route": route,
+        "read_back": read_back,
+        "project_gate_unchanged": True,
+        "dry_run": args.dry_run,
+    }
+
+
 def create_task(project_root: Path, task_id_value: str, task_name: str, *, dry_run: bool = False) -> tuple[Path, dict[str, Any]]:
     if active_tasks(project_root):
         raise CollabError("An active engineering Task already exists; pass --task to attach to it")
@@ -414,6 +537,8 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         selected_path, selected_data = match_task(project_root, task_input)
         selected_meta = selected_data.get("meta") if isinstance(selected_data.get("meta"), dict) else {}
         selected = {"path": str(selected_path), "id": task_id(selected_path, selected_data), "status": selected_data.get("status"), "delivery_state": selected_meta.get("delivery_state")}
+        if "delivery_route" in selected_meta:
+            selected["delivery_route"] = selected_meta["delivery_route"]
     except CollabError as exc:
         selection_error = str(exc)
     tasks = []
@@ -424,9 +549,17 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
             continue
         meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
         delivery_state = meta.get("delivery_state")
-        tasks.append({"path": str(path), "id": task_id(path, data), "status": data.get("status"), "archived": is_archive_path(path, project_root / ".trellis" / "tasks"), "delivery_state": delivery_state})
+        task_summary = {"path": str(path), "id": task_id(path, data), "status": data.get("status"), "archived": is_archive_path(path, project_root / ".trellis" / "tasks"), "delivery_state": delivery_state}
+        if "delivery_route" in meta:
+            task_summary["delivery_route"] = meta["delivery_route"]
+        tasks.append(task_summary)
         if delivery_state is not None and delivery_state not in DELIVERY_STATES:
             warnings.append({"code": "invalid_delivery_state", "message": f"Task {task_id(path, data)} has invalid delivery_state: {delivery_state}"})
+        if "delivery_route" in meta:
+            try:
+                validate_delivery_route(meta["delivery_route"], project)
+            except CollabError as exc:
+                warnings.append({"code": "invalid_delivery_route", "message": f"Task {task_id(path, data)}: {exc}"})
     legacy_project_gates = legacy_project_gate_records(project_root)
     if legacy_project_gates:
         warnings.append(
@@ -473,6 +606,8 @@ def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
         action, reason = "configure_trellis", "Write and read back session_auto_commit: false before archive or journal operations."
     elif "legacy_gate_records" in codes:
         action, reason = "migration_preview", "Review legacy Task-local Gate records and migrate them into the Project Gate Controller after user awareness."
+    elif "invalid_delivery_route" in codes:
+        action, reason = "check_delivery_route", "Correct the Issue-scoped Task route without changing the project Gate."
     elif "multiple_active_tasks" in codes:
         action, reason = "inspect_tasks", "Resolve the active engineering Task policy before continuing."
     elif status.get("project_gate", {}).get("current_gate") == "G5":

@@ -57,6 +57,17 @@ def build_parser() -> argparse.ArgumentParser:
     archive = subparsers.add_parser("archive-check", help="Check evidence before calling Trellis archive")
     archive.add_argument("--user-accepted", action="store_true")
 
+    subparsers.add_parser("delivery-route-check", help="Validate the optional Issue-scoped Task delivery route")
+
+    route = subparsers.add_parser("delivery-route-set", help="Write one confirmed Issue-scoped delivery route to a Trellis Task")
+    route.add_argument("--change-class", required=True)
+    route.add_argument("--entry", choices=controller.DELIVERY_REVIEWS, required=True)
+    route.add_argument("--require-review", choices=controller.DELIVERY_REVIEWS, action="append", required=True)
+    route.add_argument("--complete-review", choices=controller.DELIVERY_REVIEWS, action="append", default=[])
+    route.add_argument("--project-revalidation", choices=controller.DELIVERY_REVIEWS, action="append", default=[])
+    route.add_argument("--confirm-delivery-route", action="store_true")
+    route.add_argument("--dry-run", action="store_true")
+
     subparsers.add_parser("migration-preview", help="Read legacy Task-local and .hermes Gate records without writing")
 
     migrate = subparsers.add_parser(
@@ -86,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
             controller.print_json(controller.revalidate_gate(args))
         elif args.command == "archive-check":
             controller.print_json(controller.archive_check(args))
+        elif args.command == "delivery-route-check":
+            controller.print_json(controller.check_delivery_route(project_root, args.task))
+        elif args.command == "delivery-route-set":
+            controller.print_json(controller.set_delivery_route(args))
         elif args.command == "migration-preview":
             controller.print_json(controller.migration_preview(args))
         elif args.command == "migrate-project-gates":

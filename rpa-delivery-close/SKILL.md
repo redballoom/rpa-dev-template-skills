@@ -129,11 +129,55 @@ Trellis Tasks may store:
 - Issue, PR, commit, test, runner, and decision references;
 - `meta.delivery_state`: `paused`, `blocked`, `in_review`, or `cancelled`;
 - `meta.delivery_requirements`: whether PR, runner, and user acceptance are required;
+- optional `meta.delivery_route`: the G2-G5 review path for this Issue-scoped
+  delivery, never the project's current Gate;
 - final engineering summary before archive.
 
 The supported metadata shape is published in `references/trellis-delivery.schema.json`.
 
 Agent-native Todo remains free for current-session steps. Do not mirror every Todo into Trellis.
+
+## Issue-Scoped Delivery Route
+
+Project G0-G5 and the current delivery are two separate dimensions. After the
+first G5 close, a maintenance Task may begin with G2-, G3-, G4-, or G5-nature
+work while `.project-gates/project.json` remains G5/operational.
+
+`meta.delivery_route` is optional so older Tasks keep their existing behavior.
+When present, validate it before relying on it:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py `
+  --project-root <project-root> `
+  --task <task-id> `
+  delivery-route-check
+```
+
+After the user confirms the route, write it through the adapter so the nested
+JSON is written atomically and read back:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py `
+  --project-root <project-root> `
+  --task <task-id> `
+  delivery-route-set `
+  --change-class major_change `
+  --entry G2 `
+  --require-review G2 `
+  --require-review G3 `
+  --require-review G4 `
+  --require-review G5 `
+  --project-revalidation G2 `
+  --project-revalidation G4 `
+  --project-revalidation G5 `
+  --confirm-delivery-route
+```
+
+Do not use Trellis `task.py set-meta` for `delivery_route`; Trellis stores that
+command's value as a string rather than a nested JSON object. The route writer
+never changes Project Gate Controller. `project_revalidations` records intended
+reviews only; each actual `gate-revalidate` still requires separate user
+acceptance and evidence.
 
 ## Archive Evidence Guard
 
@@ -164,6 +208,13 @@ Recommended Task metadata:
 ```json
 {
   "meta": {
+    "delivery_route": {
+      "change_class": "major_change",
+      "entry": "G2",
+      "required_reviews": ["G2", "G3", "G4", "G5"],
+      "completed_reviews": [],
+      "project_revalidations": ["G2", "G4", "G5"]
+    },
     "delivery_requirements": {
       "require_pr": true,
       "require_runner": true,
@@ -257,6 +308,8 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not mark delivery complete when required runner evidence is missing or failed.
 - Do not replace user acceptance with tests alone.
 - Do not write Gate state into Trellis Task metadata or `progress.md`.
+- Do not put `current_gate` into `delivery_route`; the route describes only one Issue delivery.
+- Do not make `delivery_route` mandatory for legacy Tasks or for `archive-check`.
 - Do not write project Gate state under `.hermes/`; that namespace belongs to Hermes Agent.
 - Do not change a Gate without explicit user acceptance.
 - Do not archive a Task before `archive-check` returns ready.

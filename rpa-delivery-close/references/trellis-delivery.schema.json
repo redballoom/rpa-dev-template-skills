@@ -22,6 +22,37 @@
         "require_user_acceptance": {"type": "boolean"}
       }
     },
+    "delivery_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "change_class",
+        "entry",
+        "required_reviews",
+        "completed_reviews",
+        "project_revalidations"
+      ],
+      "properties": {
+        "change_class": {"type": "string", "minLength": 1},
+        "entry": {"$ref": "#/$defs/deliveryReview"},
+        "required_reviews": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/deliveryReview"},
+          "uniqueItems": true
+        },
+        "completed_reviews": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/deliveryReview"},
+          "uniqueItems": true
+        },
+        "project_revalidations": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/deliveryReview"},
+          "uniqueItems": true
+        }
+      }
+    },
     "archive_evidence": {
       "type": "object",
       "additionalProperties": false,
@@ -56,6 +87,9 @@
     }
   },
   "$defs": {
+    "deliveryReview": {
+      "enum": ["G2", "G3", "G4", "G5"]
+    },
     "results": {
       "type": "array",
       "minItems": 1,
