@@ -422,6 +422,67 @@ def set_delivery_route(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def sync_delivery_route_review(
+    project_root: Path,
+    task_file: Path | None,
+    task: dict[str, Any],
+    review: str,
+    project: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Record one accepted review in an existing Task-owned delivery route."""
+
+    if task_file is None or review not in DELIVERY_REVIEWS:
+        return {"status": "not_applicable", "review": review, "dry_run": dry_run}
+    if is_archive_path(task_file, project_root / ".trellis" / "tasks"):
+        raise CollabError("Refusing to synchronize delivery_route on an archived Task")
+
+    meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
+    raw_route = meta.get("delivery_route")
+    base = {
+        "review": review,
+        "task_file": str(task_file),
+        "task_id": task_id(task_file, task),
+        "dry_run": dry_run,
+    }
+    if raw_route is None:
+        return {**base, "status": "not_configured"}
+
+    route = validate_delivery_route(raw_route, project)
+    completed = route["completed_reviews"]
+    if review not in route["required_reviews"]:
+        return {**base, "status": "not_required", "completed_reviews": completed}
+    if review in completed:
+        return {**base, "status": "already_completed", "completed_reviews": completed}
+
+    updated_route = {
+        **route,
+        "completed_reviews": ordered_reviews([*completed, review]),
+    }
+    if dry_run:
+        return {
+            **base,
+            "status": "would_update",
+            "before": completed,
+            "completed_reviews": updated_route["completed_reviews"],
+        }
+
+    updated_task = {**task, "meta": {**meta, "delivery_route": updated_route}}
+    write_json_atomic(task_file, updated_task)
+    read_back_task = read_json(task_file)
+    read_back_meta = read_back_task.get("meta") if isinstance(read_back_task.get("meta"), dict) else {}
+    read_back = validate_delivery_route(read_back_meta.get("delivery_route"), project)
+    if read_back != updated_route:
+        raise CollabError("delivery_route accepted-review read-back verification failed")
+    return {
+        **base,
+        "status": "updated",
+        "before": completed,
+        "completed_reviews": read_back["completed_reviews"],
+    }
+
+
 def create_task(project_root: Path, task_id_value: str, task_name: str, *, dry_run: bool = False) -> tuple[Path, dict[str, Any]]:
     if active_tasks(project_root):
         raise CollabError("An active engineering Task already exists; pass --task to attach to it")
@@ -731,6 +792,14 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     timestamp = args.timestamp or now_iso()
     stable_id = event_id("gate-close", args.accepted_gate, timestamp, args)
     task_file, task_data = match_task(project_root, args.task) if args.task or find_task_files(project_root) else (None, {})
+    route_preflight = sync_delivery_route_review(
+        project_root,
+        task_file,
+        task_data,
+        args.accepted_gate,
+        project,
+        dry_run=True,
+    )
     result_gate = NEXT_GATE[args.accepted_gate]
     event = append_gate_event(project_root, event_type="gate-close", gate=args.accepted_gate, accepted_by="user", timestamp=timestamp, stable_id=stable_id, task=task_id(task_file, task_data) if task_file else None, evidence=refs, reason=args.reason, dry_run=args.dry_run)
     project["current_gate"] = result_gate
@@ -739,7 +808,42 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     project["updated_at"] = timestamp
     if not args.dry_run:
         write_json_atomic(project_path, project)
-    return {"ok": True, "event": event, "project": project, "read_back": read_project_gate(project_root), "dry_run": args.dry_run}
+    if args.dry_run:
+        route_sync = route_preflight
+    else:
+        try:
+            route_sync = sync_delivery_route_review(
+                project_root,
+                task_file,
+                task_data,
+                args.accepted_gate,
+                project,
+            )
+        except (CollabError, OSError) as exc:
+            route_sync = {
+                "status": "failed",
+                "review": args.accepted_gate,
+                "task_file": str(task_file) if task_file else None,
+                "task_id": task_id(task_file, task_data) if task_file else None,
+                "error": str(exc),
+                "dry_run": False,
+            }
+    synchronized = route_sync["status"] != "failed"
+    result = {
+        "ok": synchronized,
+        "event": event,
+        "project": project,
+        "read_back": read_project_gate(project_root),
+        "delivery_route_sync": route_sync,
+        "dry_run": args.dry_run,
+    }
+    if not synchronized:
+        result["partial_commit"] = True
+        result["error"] = (
+            "Project Gate close was committed, but Task delivery_route synchronization failed. "
+            "Do not repeat gate-close; repair the Task route and read back both authorities."
+        )
+    return result
 
 
 def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
@@ -753,8 +857,52 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     timestamp = args.timestamp or now_iso()
     stable_id = event_id("gate-revalidation", args.gate, timestamp, args)
     task_file, task_data = match_task(project_root, args.task) if args.task or find_task_files(project_root) else (None, {})
+    route_preflight = sync_delivery_route_review(
+        project_root,
+        task_file,
+        task_data,
+        args.gate,
+        project,
+        dry_run=True,
+    )
     event = append_gate_event(project_root, event_type="gate-revalidation", gate=args.gate, accepted_by="user", timestamp=timestamp, stable_id=stable_id, task=task_id(task_file, task_data) if task_file else None, evidence=refs, reason=args.reason, dry_run=args.dry_run)
-    return {"ok": True, "event": event, "project": project, "current_gate_unchanged": True, "read_back": read_project_gate(project_root), "dry_run": args.dry_run}
+    if args.dry_run:
+        route_sync = route_preflight
+    else:
+        try:
+            route_sync = sync_delivery_route_review(
+                project_root,
+                task_file,
+                task_data,
+                args.gate,
+                project,
+            )
+        except (CollabError, OSError) as exc:
+            route_sync = {
+                "status": "failed",
+                "review": args.gate,
+                "task_file": str(task_file) if task_file else None,
+                "task_id": task_id(task_file, task_data) if task_file else None,
+                "error": str(exc),
+                "dry_run": False,
+            }
+    synchronized = route_sync["status"] != "failed"
+    result = {
+        "ok": synchronized,
+        "event": event,
+        "project": project,
+        "current_gate_unchanged": True,
+        "read_back": read_project_gate(project_root),
+        "delivery_route_sync": route_sync,
+        "dry_run": args.dry_run,
+    }
+    if not synchronized:
+        result["partial_commit"] = True
+        result["error"] = (
+            "Project Gate revalidation event was committed, but Task delivery_route synchronization failed. "
+            "Do not repeat gate-revalidate; repair the Task route and read back both authorities."
+        )
+    return result
 
 
 def archive_check(args: argparse.Namespace) -> dict[str, Any]:

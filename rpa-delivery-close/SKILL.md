@@ -68,6 +68,8 @@ Use `--init-trellis` only when an interactive Trellis CLI can run in the current
 
 ## Gate Close
 
+<!-- Correction: 2026-08-28 | was: Gate close ended after the project write | reason: an existing Task delivery route could remain stale -->
+
 The canonical route is:
 
 ```text
@@ -85,7 +87,8 @@ Before closing a Gate:
 2. Report the completed result, evidence, remaining risk, and proposed next Gate.
 3. Ask exactly: `当前 Gate 是否验收通过，并记录到 Project Gate Controller？`
 4. Only after explicit acceptance, run `gate-close` with `--confirm-user-acceptance`.
-5. Read back Project Gate Controller and update only Task-owned evidence in Trellis.
+5. Run `gate-close`; when the Task already has a route containing the accepted G2-G5 review, the command also records that review under `meta.delivery_route.completed_reviews`.
+6. Read `ok`, `read_back`, and `delivery_route_sync` from the command result before reporting completion.
 
 Example:
 
@@ -103,6 +106,29 @@ python <skill-dir>\scripts\rpa_collab.py `
 
 The CLI rejects stale or repeated Gate closes. G0-G4 advance sequentially. Closing G5 keeps `current_gate=G5` and changes project status to `operational`.
 
+The route synchronization reuses the existing Task-owned field; it never writes
+`current_gate` or creates a route for a legacy Task. Interpret the result as follows:
+
+- `updated`: the accepted review was added and read back;
+- `already_completed`: the Task route already contained the review;
+- `not_configured`: the optional route is absent, so the legacy Task remains compatible;
+- `not_required` or `not_applicable`: this Gate is outside the configured Task route;
+- `failed`: the Project Gate event and snapshot were committed, but the Task route write failed.
+
+When `ok=false` and `partial_commit=true`, report the two facts separately. Do not
+repeat `gate-close`, because the Project Gate has already advanced. Repair only the
+existing Task route through `delivery-route-set`, preserving every configured route
+field and adding the accepted review, then read back both authorities.
+
+Use this completion report after a successful close:
+
+```text
+Project Gate: <accepted Gate> accepted; current_gate=<next Gate or G5>
+Task route: <delivery_route_sync.status>; completed_reviews=<read-back list or n/a>
+Evidence: <saved Gate evidence refs>
+Next: <next Gate action and owner>
+```
+
 ## G5 Revalidation
 
 After the first G5 close, maintenance never rewinds the project Gate. A major change may repeat G2/G3/G4/G5-type work in Trellis and append a Project Gate Controller revalidation after user acceptance:
@@ -119,6 +145,10 @@ python <skill-dir>\scripts\rpa_collab.py `
 ```
 
 Revalidation is available only after the initial G5 close and never changes `current_gate`.
+When the active Task has a route containing the revalidated review,
+`gate-revalidate` records it in `completed_reviews` and returns the same
+`delivery_route_sync` result. A partial synchronization failure means the
+revalidation event exists; repair the Task route without repeating the event.
 
 ## Trellis Task Facts
 
@@ -312,6 +342,8 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not make `delivery_route` mandatory for legacy Tasks or for `archive-check`.
 - Do not write project Gate state under `.hermes/`; that namespace belongs to Hermes Agent.
 - Do not change a Gate without explicit user acceptance.
+- Do not report a Gate close or revalidation as fully synchronized until both the Project Gate and `delivery_route_sync` read-backs succeed.
+- Do not repeat a committed Gate operation to repair a failed Task route synchronization.
 - Do not archive a Task before `archive-check` returns ready.
 - Do not make Trellis, Project Gate Controller, Base, or Gitea a Python runner dependency.
 - Do not push, merge, close an Issue, publish, delete, or rewrite history without explicit authorization.

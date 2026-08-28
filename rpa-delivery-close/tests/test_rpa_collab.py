@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
@@ -241,6 +242,28 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertEqual(written.require_review, ["G3"])
         self.assertTrue(written.confirm_delivery_route)
 
+    def test_cli_returns_distinct_exit_code_for_partial_gate_commit(self) -> None:
+        partial = {
+            "ok": False,
+            "partial_commit": True,
+            "delivery_route_sync": {"status": "failed"},
+        }
+        with (
+            mock.patch.object(CLI_MODULE.controller, "close_gate", return_value=partial),
+            mock.patch.object(CLI_MODULE.controller, "print_json"),
+        ):
+            exit_code = CLI_MODULE.main(
+                [
+                    "--project-root",
+                    str(self.project_root),
+                    "gate-close",
+                    "--accepted-gate",
+                    "G0",
+                    "--confirm-user-acceptance",
+                ]
+            )
+        self.assertEqual(exit_code, 3)
+
     def test_delivery_route_set_requires_confirmation_and_preserves_project_gate(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         before = MODULE.read_project_gate(self.project_root)
@@ -299,6 +322,135 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertIn("- event: gate-close", history)
         self.assertIn("- gate: G0", history)
         self.assertNotIn("progress", task["meta"])
+        self.assertEqual(result["delivery_route_sync"]["status"], "not_applicable")
+
+    def test_gate_close_syncs_required_task_delivery_review(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["current_gate"] = "G2"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_route": {
+                    "change_class": "major_change",
+                    "entry": "G2",
+                    "required_reviews": ["G2", "G3", "G4", "G5"],
+                    "completed_reviews": [],
+                    "project_revalidations": [],
+                }
+            },
+        )
+
+        result = MODULE.close_gate(
+            gate_args(
+                self.project_root,
+                accepted_gate="G2",
+                event_id="gate-close-g2-sync",
+            )
+        )
+
+        task = json.loads(
+            (self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["read_back"]["current_gate"], "G3")
+        self.assertEqual(result["delivery_route_sync"]["status"], "updated")
+        self.assertEqual(task["meta"]["delivery_route"]["completed_reviews"], ["G2"])
+        self.assertNotIn("current_gate", task["meta"]["delivery_route"])
+
+    def test_gate_close_keeps_legacy_task_without_creating_route(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["current_gate"] = "G2"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+
+        result = MODULE.close_gate(
+            gate_args(
+                self.project_root,
+                accepted_gate="G2",
+                event_id="gate-close-g2-no-route",
+            )
+        )
+
+        task = json.loads(
+            (self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(result["delivery_route_sync"]["status"], "not_configured")
+        self.assertNotIn("delivery_route", task["meta"])
+
+    def test_gate_close_preflights_invalid_route_before_project_write(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["current_gate"] = "G2"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        write_task(self.project_root, meta={"delivery_route": '{"entry":"G2"}'})
+
+        with self.assertRaisesRegex(MODULE.CollabError, "JSON object"):
+            MODULE.close_gate(
+                gate_args(
+                    self.project_root,
+                    accepted_gate="G2",
+                    event_id="gate-close-invalid-route",
+                )
+            )
+
+        self.assertEqual(MODULE.read_project_gate(self.project_root)["current_gate"], "G2")
+        history = (self.project_root / ".project-gates" / "gate-history.md").read_text(encoding="utf-8")
+        self.assertNotIn("gate-close-invalid-route", history)
+
+    def test_gate_close_reports_partial_commit_when_task_route_write_fails(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["current_gate"] = "G2"
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        write_task(
+            self.project_root,
+            meta={
+                "delivery_route": {
+                    "change_class": "major_change",
+                    "entry": "G2",
+                    "required_reviews": ["G2", "G3", "G4", "G5"],
+                    "completed_reviews": [],
+                    "project_revalidations": [],
+                }
+            },
+        )
+        original_write = MODULE.write_json_atomic
+
+        def fail_task_write(path: Path, data: dict) -> None:
+            if path.name == "task.json":
+                raise OSError("simulated Task write failure")
+            original_write(path, data)
+
+        with mock.patch.object(MODULE, "write_json_atomic", side_effect=fail_task_write):
+            result = MODULE.close_gate(
+                gate_args(
+                    self.project_root,
+                    accepted_gate="G2",
+                    event_id="gate-close-g2-partial",
+                )
+            )
+
+        task = json.loads(
+            (self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["partial_commit"])
+        self.assertEqual(result["delivery_route_sync"]["status"], "failed")
+        self.assertEqual(result["read_back"]["current_gate"], "G3")
+        self.assertEqual(task["meta"]["delivery_route"]["completed_reviews"], [])
+        self.assertIn("Do not repeat gate-close", result["error"])
 
     def test_gate_close_rejects_second_close_of_same_gate(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
@@ -314,6 +466,14 @@ class ProjectGateControllerTests(unittest.TestCase):
         project_path.write_text(json.dumps(project), encoding="utf-8")
         close_result = MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="g5-close"))
         self.assertEqual(close_result["read_back"]["status"], "operational")
+        MODULE.set_delivery_route(
+            route_args(
+                self.project_root,
+                entry="G2",
+                require_review=["G2", "G3", "G4", "G5"],
+                project_revalidation=["G2"],
+            )
+        )
         revalidate = gate_args(
             self.project_root,
             gate="G2",
@@ -323,6 +483,13 @@ class ProjectGateControllerTests(unittest.TestCase):
         result = MODULE.revalidate_gate(revalidate)
         self.assertEqual(result["read_back"]["current_gate"], "G5")
         self.assertTrue(result["current_gate_unchanged"])
+        self.assertEqual(result["delivery_route_sync"]["status"], "updated")
+        task = json.loads(
+            (self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(task["meta"]["delivery_route"]["completed_reviews"], ["G2"])
         with self.assertRaises(MODULE.CollabError):
             MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="g5-second-close"))
 

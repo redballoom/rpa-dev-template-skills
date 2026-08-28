@@ -4,13 +4,14 @@
     {
       "id": 1,
       "prompt": "这个 RPA 项目刚完成 G3 技术验证，测试和 dry-run 都通过了，但没有飞书 Base。请准备让我验收。",
-      "expected_output": "Agent 读取 Project Gate、Trellis Task 和技术证据，先报告 G3 结果并请求验收；确认后只把 Gate close 写入 Project Gate Controller，不要求 Base。",
+      "expected_output": "Agent 读取 Project Gate、Trellis Task 和技术证据，先报告 G3 结果并请求验收；确认后写入 Project Gate Controller，并在已有 Task 路线要求 G3 时同步 completed_reviews，不要求 Base。",
       "files": [],
       "expectations": [
         "The response does not require a Base link for local Gate closure.",
         "The response asks for G3 acceptance before writing Project Gate Controller.",
         "The response identifies .project-gates/project.json and gate-history.md as Gate records.",
-        "The response does not write current_gate into Trellis Task metadata or progress.md."
+        "The response does not write current_gate into Trellis Task metadata or progress.md.",
+        "After acceptance, the response checks delivery_route_sync and only reports a fully synchronized close after both read-backs succeed."
       ]
     },
     {
@@ -60,6 +61,19 @@
         "The response does not use Trellis set-meta to store the structured route.",
         "The response treats missing delivery_route on legacy Tasks as compatible.",
         "The response requires separate acceptance before each actual Project Gate revalidation."
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "我已经确认 G2 验收。关闭结果显示项目已经进入 G3，但 Task 路线写入失败了。请继续处理。",
+      "expected_output": "Agent 将结果识别为部分提交，不重复 gate-close；保留项目 G3，使用 delivery-route-set 只修复现有 Task 路线并追加 G2，然后回读两套权威状态。",
+      "files": [],
+      "expectations": [
+        "The response does not repeat gate-close after the Project Gate was committed.",
+        "The response keeps Project Gate current_gate at G3.",
+        "The response repairs only the existing Task-owned delivery_route through the structured route writer.",
+        "The response preserves the existing route fields while adding G2 to completed_reviews.",
+        "The response reads back both Project Gate Controller and the Task route before reporting synchronization."
       ]
     }
   ]

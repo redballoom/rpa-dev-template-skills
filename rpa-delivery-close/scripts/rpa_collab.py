@@ -92,9 +92,15 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "bootstrap":
             controller.print_json(controller.bootstrap_collaboration(args))
         elif args.command == "gate-close":
-            controller.print_json(controller.close_gate(args))
+            result = controller.close_gate(args)
+            controller.print_json(result)
+            if not result.get("ok", True):
+                return 3
         elif args.command == "gate-revalidate":
-            controller.print_json(controller.revalidate_gate(args))
+            result = controller.revalidate_gate(args)
+            controller.print_json(result)
+            if not result.get("ok", True):
+                return 3
         elif args.command == "archive-check":
             controller.print_json(controller.archive_check(args))
         elif args.command == "delivery-route-check":
