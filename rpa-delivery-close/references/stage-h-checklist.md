@@ -30,6 +30,7 @@ Trellis:
 - `design.md` is present when the project was complex enough to need design.
 - `implement.md` or equivalent implementation plan reflects what was actually built.
 - The task links to relevant commits, runner evidence, and acceptance conclusion.
+- When available, the task links to `evidence/runs/{run_id}.summary.json`; the Controller reports it as valid and `delivery_ready`.
 - The Task does not contain `meta.progress.current_gate` or Task-local Gate history.
 - `meta.delivery_state` contains only Task-owned delivery state.
 - `meta.delivery_requirements` explicitly records boolean `require_pr`,
@@ -60,6 +61,7 @@ When Trellis is absent:
 - Relevant tests were run, or the report states why tests could not run.
 - Accepted run has a `run_id`.
 - `runner_{run_id}.json.status` is `success` or accepted `warning`.
+- Portable evidence summary is integrity-valid, has `working_tree_clean=true`, matches current `HEAD`, and records `run.bat`; otherwise it is not delivery evidence.
 - `pending_fix`, `fatal`, `failed`, and unresolved repeated `retryable_error` are not treated as delivered.
 - Business output location and count or key sample are known when applicable.
 

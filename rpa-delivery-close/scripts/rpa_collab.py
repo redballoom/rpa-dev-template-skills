@@ -38,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("suggest", help="Recommend the next legal action")
 
+    evidence_check = subparsers.add_parser("evidence-check", help="Validate a portable sanitized run summary")
+    evidence_check.add_argument("--summary", required=True, help="Path under evidence/runs ending in .summary.json")
+
     bootstrap = subparsers.add_parser("bootstrap", help="Initialize Project Gate tracking and attach one Trellis engineering Task")
     bootstrap.add_argument("--project-name", required=True)
     bootstrap.add_argument("--task-id")
@@ -94,6 +97,14 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "suggest":
             status = controller.build_status(project_root, args.task)
             controller.print_json({"status": status, "suggestion": controller.suggest_action(status)})
+        elif args.command == "evidence-check":
+            summary_path = controller.evidence_path(project_root, args.summary)
+            if not summary_path or not controller.is_evidence_summary_path(summary_path):
+                raise controller.CollabError("--summary must reference evidence/runs/*.summary.json")
+            result = controller.validate_evidence_summary(project_root, summary_path)
+            controller.print_json(result)
+            if not result["valid"]:
+                return 3
         elif args.command == "bootstrap":
             controller.print_json(controller.bootstrap_collaboration(args))
         elif args.command == "gate-close":

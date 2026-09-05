@@ -138,6 +138,59 @@ def write_legacy_project_gate(project_root: Path) -> None:
     (legacy_dir / "gate-history.md").write_text("# Gate History\n\n", encoding="utf-8")
 
 
+def write_evidence_summary(
+    project_root: Path,
+    commit: str,
+    *,
+    status: str = "success",
+    clean: bool = True,
+    entrypoint: str = "run.bat",
+    run_id: str = "portable-001",
+) -> Path:
+    summary = {
+        "schema_version": 1,
+        "run": {
+            "run_id": run_id,
+            "status": status,
+            "started_at": "2026-09-05T00:00:00Z",
+            "finished_at": "2026-09-05T00:00:01Z",
+            "commit": commit,
+            "working_tree_clean": clean,
+        },
+        "runtime": {
+            "entrypoint": entrypoint,
+            "interpreter": {
+                "implementation": "CPython",
+                "version": "3.12.0",
+                "executable": "python.exe",
+                "environment": "system",
+            },
+        },
+        "counts": {
+            "tasks_planned": 1,
+            "tasks_recorded": 1,
+            "succeeded": 1 if status == "success" else 0,
+            "skipped": 1 if status == "warning" else 0,
+            "failed": 0 if status in {"success", "warning"} else 1,
+            "warnings": 1 if status == "warning" else 0,
+            "errors": 0 if status in {"success", "warning"} else 1,
+        },
+        "issue_groups": [],
+        "artifacts": {
+            "input": {"present": True, "bytes": 10, "sha256": "1" * 64},
+            "runner_output": {"present": True, "bytes": 20, "sha256": "2" * 64},
+        },
+    }
+    summary["integrity"] = {
+        "algorithm": "sha256",
+        "sha256": MODULE.hashlib.sha256(MODULE.canonical_json_bytes(summary)).hexdigest(),
+    }
+    path = project_root / "evidence" / "runs" / f"{run_id}.summary.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
 class ProjectGateControllerTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -230,6 +283,65 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertEqual(status["selected_task"]["id"], "demo-delivery")
         self.assertEqual(status["runner"]["status"], "success")
         self.assertIn("legacy_gate_records", {item["code"] for item in status["warnings"]})
+
+    def test_portable_evidence_summary_is_validated_and_reported(self) -> None:
+        commit = self.init_git()
+        path = write_evidence_summary(self.project_root, commit)
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertTrue(checked["valid"])
+        self.assertTrue(checked["delivery_ready"])
+        self.assertTrue(checked["production_entrypoint"])
+        status = MODULE.build_status(self.project_root)
+        self.assertEqual(status["evidence_summary"]["run_id"], "portable-001")
+        self.assertTrue(status["evidence_summary"]["delivery_ready"])
+
+    def test_portable_evidence_rejects_tamper_sensitive_field_and_failure(self) -> None:
+        commit = self.init_git()
+        path = write_evidence_summary(self.project_root, commit)
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary["counts"]["succeeded"] = 99
+        path.write_text(json.dumps(summary), encoding="utf-8")
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertFalse(checked["valid"])
+        self.assertIn("integrity hash mismatch", checked["errors"])
+
+        path = write_evidence_summary(self.project_root, commit, run_id="sensitive")
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary["runtime"]["payload"] = {"token": "secret"}
+        unsigned = dict(summary)
+        unsigned.pop("integrity")
+        summary["integrity"]["sha256"] = MODULE.hashlib.sha256(MODULE.canonical_json_bytes(unsigned)).hexdigest()
+        path.write_text(json.dumps(summary), encoding="utf-8")
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertFalse(checked["valid"])
+        self.assertTrue(any("unexpected runtime fields" in item for item in checked["errors"]))
+
+        path = write_evidence_summary(self.project_root, commit, status="pending_fix", run_id="failed")
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertTrue(checked["valid"])
+        self.assertFalse(checked["delivery_ready"])
+
+    def test_portable_evidence_requires_clean_current_commit_and_run_bat(self) -> None:
+        commit = self.init_git()
+        dirty = MODULE.validate_evidence_summary(
+            self.project_root,
+            write_evidence_summary(self.project_root, commit, clean=False, run_id="dirty"),
+        )
+        self.assertFalse(dirty["delivery_ready"])
+        direct = MODULE.validate_evidence_summary(
+            self.project_root,
+            write_evidence_summary(self.project_root, commit, entrypoint="runner.py", run_id="direct"),
+        )
+        self.assertFalse(direct["delivery_ready"])
+        next_commit = self.commit_file("runtime.py", "print('changed')\n", "change runtime")
+        self.assertNotEqual(commit, next_commit)
+        stale = MODULE.validate_evidence_summary(
+            self.project_root,
+            write_evidence_summary(self.project_root, commit, run_id="stale"),
+        )
+        self.assertTrue(stale["valid"])
+        self.assertFalse(stale["commit_matches_head"])
+        self.assertFalse(stale["delivery_ready"])
 
     def test_legacy_project_without_baseline_remains_readable(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))

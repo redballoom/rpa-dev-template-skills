@@ -43,6 +43,22 @@ GOVERNANCE_PATHS = {
     ".gitignore",
     "AGENTS.md",
 }
+EVIDENCE_SUMMARY_TOP_LEVEL = {
+    "schema_version", "run", "runtime", "counts", "issue_groups", "artifacts", "integrity",
+}
+EVIDENCE_SUMMARY_FIELDS = {
+    "run": {"run_id", "status", "started_at", "finished_at", "commit", "working_tree_clean"},
+    "runtime": {"entrypoint", "interpreter"},
+    "interpreter": {"implementation", "version", "executable", "environment"},
+    "counts": {"tasks_planned", "tasks_recorded", "succeeded", "skipped", "failed", "warnings", "errors"},
+    "issue_group": {"kind", "code", "category", "retryable", "count"},
+    "artifacts": {"input", "runner_output"},
+    "artifact": {"present", "bytes", "sha256"},
+    "integrity": {"algorithm", "sha256"},
+}
+EVIDENCE_SUMMARY_STATUSES = {
+    "success", "warning", "retryable_error", "pending_fix", "failed", "locked", "fatal",
+}
 
 
 class CollabError(RuntimeError):
@@ -621,6 +637,172 @@ def resolve_git_commit(project_root: Path, reference: str | None = None, *, requ
     return None
 
 
+def is_evidence_summary_path(path: Path) -> bool:
+    normalized = path.as_posix().lower()
+    return normalized.endswith(".summary.json") and "/evidence/runs/" in "/" + normalized.lstrip("/")
+
+
+def canonical_json_bytes(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _check_summary_fields(errors: list[str], value: Any, kind: str) -> None:
+    if not isinstance(value, dict):
+        errors.append(f"{kind} must be an object")
+        return
+    unexpected = sorted(set(value) - EVIDENCE_SUMMARY_FIELDS[kind])
+    missing = sorted(EVIDENCE_SUMMARY_FIELDS[kind] - set(value))
+    if unexpected:
+        errors.append(f"unexpected {kind} fields: {', '.join(unexpected)}")
+    if missing:
+        errors.append(f"missing {kind} fields: {', '.join(missing)}")
+
+
+def validate_evidence_summary(project_root: Path, path: Path) -> dict[str, Any]:
+    """Validate a portable summary without depending on the runtime template package."""
+    project_root = project_root.resolve()
+    path = path.resolve()
+    try:
+        summary = read_json(path)
+    except CollabError as exc:
+        return {"path": str(path), "valid": False, "delivery_ready": False, "errors": [str(exc)]}
+
+    errors: list[str] = []
+    unexpected = sorted(set(summary) - EVIDENCE_SUMMARY_TOP_LEVEL)
+    missing = sorted(EVIDENCE_SUMMARY_TOP_LEVEL - set(summary))
+    if unexpected:
+        errors.append(f"unexpected top-level fields: {', '.join(unexpected)}")
+    if missing:
+        errors.append(f"missing fields: {', '.join(missing)}")
+    if summary.get("schema_version") != 1:
+        errors.append("unsupported schema_version")
+
+    run = summary.get("run")
+    runtime = summary.get("runtime")
+    counts = summary.get("counts")
+    groups = summary.get("issue_groups")
+    artifacts = summary.get("artifacts")
+    integrity = summary.get("integrity")
+    _check_summary_fields(errors, run, "run")
+    _check_summary_fields(errors, runtime, "runtime")
+    _check_summary_fields(errors, runtime.get("interpreter") if isinstance(runtime, dict) else None, "interpreter")
+    _check_summary_fields(errors, counts, "counts")
+    _check_summary_fields(errors, artifacts, "artifacts")
+    _check_summary_fields(errors, integrity, "integrity")
+    if isinstance(artifacts, dict):
+        _check_summary_fields(errors, artifacts.get("input"), "artifact")
+        _check_summary_fields(errors, artifacts.get("runner_output"), "artifact")
+    if not isinstance(groups, list):
+        errors.append("issue_groups must be an array")
+    else:
+        for item in groups:
+            _check_summary_fields(errors, item, "issue_group")
+
+    if isinstance(run, dict):
+        if not isinstance(run.get("run_id"), str) or not run.get("run_id"):
+            errors.append("run_id must be a non-empty string")
+        if not isinstance(run.get("working_tree_clean"), bool):
+            errors.append("working_tree_clean must be boolean")
+        for field in ("started_at", "finished_at"):
+            if not isinstance(run.get(field), str) or not run.get(field):
+                errors.append(f"{field} must be a non-empty string")
+    if isinstance(runtime, dict):
+        if runtime.get("entrypoint") not in {"run.bat", "runner.py"}:
+            errors.append("entrypoint must be run.bat or runner.py")
+        interpreter_value = runtime.get("interpreter")
+        if isinstance(interpreter_value, dict):
+            for field in ("implementation", "version", "executable"):
+                if not isinstance(interpreter_value.get(field), str) or not interpreter_value.get(field):
+                    errors.append(f"interpreter.{field} must be a non-empty string")
+            if interpreter_value.get("environment") not in {"project_venv", "virtualenv", "system"}:
+                errors.append("invalid interpreter.environment")
+    if isinstance(counts, dict):
+        for field, value in counts.items():
+            if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+                errors.append(f"counts.{field} must be a non-negative integer")
+    if isinstance(groups, list):
+        for index, item in enumerate(groups):
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") not in {"warning", "error"}:
+                errors.append(f"issue_groups[{index}].kind is invalid")
+            if not isinstance(item.get("retryable"), bool):
+                errors.append(f"issue_groups[{index}].retryable must be boolean")
+            if not isinstance(item.get("count"), int) or isinstance(item.get("count"), bool) or item.get("count", 0) < 1:
+                errors.append(f"issue_groups[{index}].count must be a positive integer")
+    if isinstance(artifacts, dict):
+        for label in ("input", "runner_output"):
+            artifact = artifacts.get(label)
+            if not isinstance(artifact, dict):
+                continue
+            if not isinstance(artifact.get("present"), bool):
+                errors.append(f"artifacts.{label}.present must be boolean")
+            if not isinstance(artifact.get("bytes"), int) or isinstance(artifact.get("bytes"), bool) or artifact.get("bytes", -1) < 0:
+                errors.append(f"artifacts.{label}.bytes must be a non-negative integer")
+            digest = str(artifact.get("sha256") or "")
+            if digest and not re.fullmatch(r"[0-9a-f]{64}", digest):
+                errors.append(f"artifacts.{label}.sha256 is invalid")
+
+    expected_hash = integrity.get("sha256", "") if isinstance(integrity, dict) else ""
+    unsigned = dict(summary)
+    unsigned.pop("integrity", None)
+    actual_hash = hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest()
+    if not isinstance(integrity, dict) or integrity.get("algorithm") != "sha256" or not re.fullmatch(r"[0-9a-f]{64}", str(expected_hash)):
+        errors.append("invalid integrity metadata")
+    elif expected_hash != actual_hash:
+        errors.append("integrity hash mismatch")
+
+    run = run if isinstance(run, dict) else {}
+    runtime = runtime if isinstance(runtime, dict) else {}
+    status = run.get("status")
+    commit = str(run.get("commit") or "").lower()
+    if status not in EVIDENCE_SUMMARY_STATUSES:
+        errors.append("invalid run status")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        errors.append("run commit must be an exact 40-character SHA")
+    commit_exists = False
+    commit_matches_head = False
+    if re.fullmatch(r"[0-9a-f]{40}", commit):
+        code, _ = run_git(project_root, ["cat-file", "-e", f"{commit}^{{commit}}"])
+        commit_exists = code == 0
+        try:
+            commit_matches_head = commit_exists and resolve_git_commit(project_root, required=True) == commit
+        except CollabError:
+            commit_matches_head = False
+
+    interpreter = runtime.get("interpreter") if isinstance(runtime.get("interpreter"), dict) else {}
+    production_entrypoint = runtime.get("entrypoint") == "run.bat"
+    accepted_status = status in {"success", "warning"}
+    working_tree_clean = run.get("working_tree_clean") is True
+    valid = not errors
+    delivery_ready = all(
+        [valid, accepted_status, working_tree_clean, commit_exists, commit_matches_head, production_entrypoint]
+    )
+    return {
+        "path": str(path),
+        "valid": valid,
+        "delivery_ready": delivery_ready,
+        "errors": errors,
+        "run_id": run.get("run_id"),
+        "status": status,
+        "commit": commit,
+        "working_tree_clean": working_tree_clean,
+        "commit_exists": commit_exists,
+        "commit_matches_head": commit_matches_head,
+        "entrypoint": runtime.get("entrypoint"),
+        "production_entrypoint": production_entrypoint,
+        "interpreter": interpreter,
+        "counts": counts if isinstance(counts, dict) else {},
+        "integrity_sha256": actual_hash,
+    }
+
+
+def latest_evidence_summary(project_root: Path) -> dict[str, Any] | None:
+    evidence_dir = project_root / "evidence" / "runs"
+    candidates = sorted(evidence_dir.glob("*.summary.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+    return validate_evidence_summary(project_root, candidates[0]) if candidates else None
+
+
 def git_paths(project_root: Path, args: list[str]) -> list[str]:
     code, output = run_git(project_root, ["-c", "core.quotepath=false", *args])
     if code != 0 or not output:
@@ -846,6 +1028,16 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
     }
     if baseline_state in baseline_messages:
         warnings.append({"code": baseline_state, "message": baseline_messages[baseline_state]})
+    evidence_summary = latest_evidence_summary(project_root)
+    if evidence_summary and not evidence_summary["valid"]:
+        warnings.append({"code": "invalid_evidence_summary", "message": "; ".join(evidence_summary["errors"])})
+    elif evidence_summary and not evidence_summary["delivery_ready"]:
+        warnings.append(
+            {
+                "code": "evidence_summary_not_delivery_ready",
+                "message": "Latest portable evidence is not a successful clean-commit run through run.bat at current HEAD",
+            }
+        )
     return {
         "ok": True,
         "project_root": str(project_root),
@@ -856,6 +1048,7 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         "legacy_project_gate_records": legacy_project_gates,
         "warnings": warnings,
         "runner": latest_runner(project_root),
+        "evidence_summary": evidence_summary,
         "git": git,
         "delivery_baseline": delivery_baseline,
     }
@@ -885,6 +1078,8 @@ def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
         action, reason = "recover_accepted_baseline", "Recover or explicitly replace the missing accepted commit before relying on delivery status."
     elif "missing_accepted_baseline" in codes and status.get("project_gate", {}).get("current_gate") != "G0":
         action, reason = "record_accepted_baseline", "The project advanced without a Git acceptance baseline; capture one at the next explicit Gate acceptance."
+    elif "invalid_evidence_summary" in codes or "evidence_summary_not_delivery_ready" in codes:
+        action, reason = "rerun_production_entrypoint", "Regenerate portable evidence from a clean current commit through run.bat before delivery."
     elif status.get("project_gate", {}).get("current_gate") == "G5":
         action, reason = "continue_task_or_revalidate", "Keep the project at G5; use a Task for maintenance or Gate revalidation for major change."
     else:
@@ -915,7 +1110,11 @@ def require_evidence(project_root: Path, refs: list[str]) -> list[str]:
     if not refs:
         raise CollabError("At least one evidence reference is required")
     for ref in refs:
-        evidence_path(project_root, ref)
+        path = evidence_path(project_root, ref)
+        if path and is_evidence_summary_path(path):
+            validation = validate_evidence_summary(project_root, path)
+            if not validation["valid"]:
+                raise CollabError(f"Portable evidence summary is invalid: {ref}: {'; '.join(validation['errors'])}")
     return refs
 
 
@@ -1387,15 +1586,21 @@ def archive_check(args: argparse.Namespace) -> dict[str, Any]:
     if requirements.get("require_runner"):
         runner_refs = archive.get("runner_refs") or task.get("runner_refs") or meta.get("runner_refs") or []
         runner_ok = False
+        summary_seen = False
         for ref in runner_refs if isinstance(runner_refs, list) else []:
             try:
                 path = evidence_path(project_root, str(ref))
-                runner = read_json(path) if path else {}
-                runner_ok = runner_ok or runner.get("status") in {"success", "warning"}
+                if path and is_evidence_summary_path(path):
+                    summary_seen = True
+                    runner_ok = runner_ok or validate_evidence_summary(project_root, path)["delivery_ready"]
+                else:
+                    runner = read_json(path) if path else {}
+                    runner_ok = runner_ok or runner.get("status") in {"success", "warning"}
             except CollabError:
                 continue
-        latest = latest_runner(project_root)
-        runner_ok = runner_ok or bool(latest and latest.get("status") in {"success", "warning"})
+        if not summary_seen:
+            latest = latest_runner(project_root)
+            runner_ok = runner_ok or bool(latest and latest.get("status") in {"success", "warning"})
         if not runner_ok:
             missing.append("runner_evidence")
     if requirements.get("require_user_acceptance") and not (args.user_accepted or archive.get("user_acceptance") is True):

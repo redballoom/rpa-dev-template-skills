@@ -26,7 +26,7 @@ Read, when present:
 2. Current and active Trellis Tasks, including PRD, design, implementation plan, notes, metadata, and final summary.
 3. Linked Issue and PR.
 4. Git status and recent commits.
-5. Relevant `runner_{run_id}.json`, logs, output, and ShadowBot evidence.
+5. Prefer `evidence/runs/{run_id}.summary.json`; use the private `runner_{run_id}.json`, logs, output, and ShadowBot evidence only when the summary is absent or details are explicitly needed.
 6. Project contract and acceptance documents.
 
 Use the bundled CLI for the authoritative local view:
@@ -37,6 +37,19 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
 ```
 
 `status` and `suggest` are read-only. They combine sources but do not write a second current Task or Gate snapshot. Read `delivery_baseline.state`, `delivery_paths`, and `requires_user_review` before reporting that a project is delivered. `unaccepted_delivery_drift` or `history_diverged` means the current code is not covered by the last accepted baseline.
+
+### Portable run evidence
+
+The runtime template emits `evidence/runs/{run_id}.summary.json` after every run. Validate it before relying on it:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py `
+  --project-root <project-root> `
+  evidence-check `
+  --summary evidence/runs/{run_id}.summary.json
+```
+
+The Controller checks the closed schema, summary integrity SHA-256, exact Git commit, status, and `working_tree_clean`. A summary is `delivery_ready` only when it is a successful or accepted warning run from a clean commit at current `HEAD` through `run.bat`; it must not contain payloads, messages, traces, credentials, cookies, or full responses. `status` exposes the latest summary as `evidence_summary` and warns when it is invalid or stale.
 
 ## Collaboration Bootstrap
 
@@ -251,7 +264,7 @@ The Task should provide:
 - `meta.archive_evidence.technical_checks` entries with passed result and evidence references;
 - a Git commit that exists locally;
 - `pr_url` when `meta.delivery_requirements.require_pr=true`;
-- successful runner evidence when `require_runner=true`;
+- successful runner evidence when `require_runner=true`; prefer a `delivery_ready` portable summary under `evidence/runs/`, while legacy `runner_{run_id}.json` remains readable for older projects;
 - explicit user acceptance when `require_user_acceptance=true`.
 - a non-empty final engineering summary.
 
@@ -281,7 +294,7 @@ Recommended Task metadata:
       ],
       "commit": "abc1234",
       "pr_url": "https://gitea.example/pr/12",
-      "runner_refs": ["runner_delivery_001.json"],
+      "runner_refs": ["evidence/runs/delivery_001.summary.json"],
       "user_acceptance": true,
       "final_summary": "Accepted implementation and target-environment result."
     }
@@ -342,7 +355,7 @@ Before saying Stage H is ready, check:
 - Task AC, technical checks, notes, final summary, and delivery requirements;
 - Git commit and PR state;
 - accepted baseline versus current HEAD, including delivery-impacting and governance-only paths;
-- tests and runner result;
+- tests and runner result; validate `evidence_summary` and its `delivery_ready` state when present;
 - ShadowBot and business acceptance;
 - Project Gate close or revalidation event, when applicable;
 - archive guard result;
@@ -359,6 +372,7 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 ## Guardrails
 
 - Do not mark delivery complete when required runner evidence is missing or failed.
+- Do not treat an invalid, stale, dirty-commit, direct-`runner.py`, or non-success portable summary as delivery evidence.
 - Do not replace user acceptance with tests alone.
 - Do not write Gate state into Trellis Task metadata or `progress.md`.
 - Do not put `current_gate` into `delivery_route`; the route describes only one Issue delivery.

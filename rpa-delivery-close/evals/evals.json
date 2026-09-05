@@ -2,6 +2,28 @@
   "skill_name": "rpa-delivery-close",
   "evals": [
     {
+      "id": 9,
+      "prompt": "项目有 evidence/runs/20260905.summary.json，status 显示 success，但请先确认摘要哈希、commit、run.bat 和工作树，再告诉我能否作为 G4 证据。",
+      "expected_output": "Agent 使用 evidence-check 或等价校验，报告摘要完整性、当前 HEAD 匹配、工作树清洁、生产入口和 delivery_ready，不依赖原始 runner 内容。",
+      "files": [],
+      "expectations": [
+        "The response validates the portable summary integrity and exact commit.",
+        "The response checks working_tree_clean and run.bat before accepting G4 evidence.",
+        "The response does not request or expose full payloads, credentials, or raw responses."
+      ]
+    },
+    {
+      "id": 10,
+      "prompt": "这个 evidence summary 的 sha256 被人改过，或者它记录的是旧 commit；runner 原文件已经被 .gitignore 忽略。请判断能不能归档。",
+      "expected_output": "Agent 拒绝把摘要当作有效交付证据，指出完整性或版本不匹配，并要求从当前干净 commit 通过 run.bat 重新生成摘要。",
+      "files": [],
+      "expectations": [
+        "The response rejects tampered or stale portable evidence.",
+        "The response does not treat an ignored raw runner as sufficient replacement when a summary reference is provided.",
+        "The response recommends rerunning the production entrypoint from the current clean commit."
+      ]
+    },
+    {
       "id": 1,
       "prompt": "这个 RPA 项目刚完成 G3 技术验证，测试和 dry-run 都通过了，但没有飞书 Base。请准备让我验收。",
       "expected_output": "Agent 读取 Project Gate、Trellis Task 和技术证据，先报告 G3 结果并请求验收；确认后写入 Project Gate Controller，并在已有 Task 路线要求 G3 时同步 completed_reviews，不要求 Base。",
