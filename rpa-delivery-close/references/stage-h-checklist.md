@@ -16,9 +16,12 @@ Project Gate Controller:
 
 - `.project-gates/project.json` contains the only project `current_gate`.
 - `.project-gates/gate-history.md` contains the accepted Gate close or revalidation event when applicable.
+- `accepted_baseline.commit` identifies the last Git version accepted by the user.
+- `status.delivery_baseline` does not report `unaccepted_delivery_drift`, `history_diverged`, or a missing accepted commit.
 - Legacy `.hermes/project.json` and `.hermes/gate-history.md` are absent; `.hermes/plugins/` may remain for Hermes Agent.
 - The Gate event references evidence rather than copying its content.
 - G5 maintenance keeps `current_gate=G5`; major changes append revalidation events.
+- G0-G2 corrections before the first G5 append `gate-amendment` events without rewriting the original close.
 
 Trellis:
 

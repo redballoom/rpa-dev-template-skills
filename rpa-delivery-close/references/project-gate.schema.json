@@ -25,6 +25,31 @@
     "status": {
       "enum": ["active", "operational", "archived", "terminated"]
     },
+    "accepted_baseline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "gate", "event", "event_id", "accepted_at"],
+      "properties": {
+        "commit": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{7,64}$"
+        },
+        "gate": {
+          "enum": ["G0", "G1", "G2", "G3", "G4", "G5"]
+        },
+        "event": {
+          "enum": ["gate-close", "gate-revalidation", "gate-amendment"]
+        },
+        "event_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "accepted_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "updated_at": {
       "type": "string",
       "format": "date-time"

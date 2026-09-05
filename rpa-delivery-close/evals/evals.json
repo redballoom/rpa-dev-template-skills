@@ -75,6 +75,30 @@
         "The response preserves the existing route fields while adding G2 to completed_reviews.",
         "The response reads back both Project Gate Controller and the Task route before reporting synchronization."
       ]
+    },
+    {
+      "id": 7,
+      "prompt": "这个项目显示 G5 已交付，但后来有人又提交了 run.bat 修改。请告诉我现在还能不能算已验收。",
+      "expected_output": "Agent 比较 Project Gate accepted_baseline 与当前 HEAD，将 run.bat 识别为交付影响漂移，不把当前代码误报为已验收，并给出需要重新验证的责任方和下一步。",
+      "files": [],
+      "expectations": [
+        "The response compares the recorded accepted baseline commit with current HEAD.",
+        "The response classifies run.bat as delivery-impacting rather than governance-only drift.",
+        "The response does not claim the current HEAD is accepted.",
+        "The response identifies a validation or revalidation action and an owner."
+      ]
+    },
+    {
+      "id": 8,
+      "prompt": "首次交付还在 G3，但我们把已经确认过的 G2 输入契约改了，用户已经接受新版本。请正式记录，不要把项目退回 G2。",
+      "expected_output": "Agent 核对原 G2 close、修订 commit 和证据，使用 gate-amendment 追加修订事件，保存前后 accepted baseline，保持 current_gate=G3，并回读 Task route 同步结果。",
+      "files": [],
+      "expectations": [
+        "The response uses gate-amendment rather than rewinding current_gate or using post-G5 revalidation.",
+        "The response requires an already closed G0-G2 Gate, a non-empty reason, evidence, an exact Git commit, and explicit acceptance.",
+        "The response preserves the original Gate close and records previous and new accepted commits.",
+        "The response keeps current_gate unchanged and reads back delivery_route synchronization."
+      ]
     }
   ]
 }

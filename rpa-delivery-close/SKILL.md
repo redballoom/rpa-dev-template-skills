@@ -1,6 +1,6 @@
 ---
 name: rpa-delivery-close
-description: Inspect and close delivery work for projects created from rpa-dev-template. Use whenever the user asks where an RPA project is, confirms a G0-G5 result, reports a blocker or owner handoff, asks to recover cross-session state, requests Gate revalidation, wants to archive a Trellis Task, asks for Stage H, or requests a Feishu Base projection. Trellis is the only engineering Task authority; Project Gate Controller .project-gates/ is the only project Gate authority. Always run the evidence guard before Trellis archive and never write project Gates into Task metadata or progress.md.
+description: Inspect and close delivery work for projects created from rpa-dev-template. Use whenever the user asks where an RPA project is, whether delivered code has drifted, confirms or corrects a G0-G5 result, reports a blocker or owner handoff, asks to recover cross-session state, requests a pre-G5 Gate amendment or post-G5 revalidation, wants to archive a Trellis Task, asks for Stage H, or requests a Feishu Base projection. Trellis is the only engineering Task authority; Project Gate Controller .project-gates/ is the only project Gate authority. Always compare the accepted Git baseline with current HEAD, run the evidence guard before Trellis archive, and never write project Gates into Task metadata or progress.md.
 ---
 
 # RPA Delivery Close
@@ -22,7 +22,7 @@ One fact has one writer. Do not copy `current_gate` into `task.json`, Task notes
 
 Read, when present:
 
-1. `.project-gates/project.json` and the latest `.project-gates/gate-history.md` event.
+1. `.project-gates/project.json`, its optional `accepted_baseline`, and the latest `.project-gates/gate-history.md` event.
 2. Current and active Trellis Tasks, including PRD, design, implementation plan, notes, metadata, and final summary.
 3. Linked Issue and PR.
 4. Git status and recent commits.
@@ -36,7 +36,7 @@ python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> status
 python <skill-dir>\scripts\rpa_collab.py --project-root <project-root> suggest
 ```
 
-`status` and `suggest` are read-only. They combine sources but do not write a second current Task or Gate snapshot.
+`status` and `suggest` are read-only. They combine sources but do not write a second current Task or Gate snapshot. Read `delivery_baseline.state`, `delivery_paths`, and `requires_user_review` before reporting that a project is delivered. `unaccepted_delivery_drift` or `history_diverged` means the current code is not covered by the last accepted baseline.
 
 ## Collaboration Bootstrap
 
@@ -98,13 +98,14 @@ python <skill-dir>\scripts\rpa_collab.py `
   --task <task-id> `
   gate-close `
   --accepted-gate G2 `
+  --baseline-commit abc1234 `
   --confirm-user-acceptance `
   --reason "用户确认契约并允许开发" `
   --evidence docs/SHADOWBOT_INPUT_CONTRACT.md `
   --evidence commit:abc1234
 ```
 
-The CLI rejects stale or repeated Gate closes. G0-G4 advance sequentially. Closing G5 keeps `current_gate=G5` and changes project status to `operational`.
+The CLI rejects stale or repeated Gate closes. G0-G4 advance sequentially. Closing G5 keeps `current_gate=G5` and changes project status to `operational`. When Git is available, the command records the exact accepted commit in `project.json.accepted_baseline`; `--baseline-commit` pins an explicit commit and otherwise the command resolves `HEAD`. Old snapshots without this optional field remain readable but `status` reports that no accepted baseline is available.
 
 The route synchronization reuses the existing Task-owned field; it never writes
 `current_gate` or creates a route for a legacy Task. Interpret the result as follows:
@@ -126,8 +127,29 @@ Use this completion report after a successful close:
 Project Gate: <accepted Gate> accepted; current_gate=<next Gate or G5>
 Task route: <delivery_route_sync.status>; completed_reviews=<read-back list or n/a>
 Evidence: <saved Gate evidence refs>
+Accepted baseline: <commit or unavailable>
 Next: <next Gate action and owner>
 ```
+
+## Pre-G5 Gate Amendment
+
+Use `gate-amendment` when an already accepted G0, G1, or G2 statement changes before the first G5 close. It appends a correction event and updates the accepted Git baseline without rewinding `current_gate` or overwriting the original close:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py `
+  --project-root <project-root> `
+  --task <task-id> `
+  gate-amendment `
+  --gate G2 `
+  --baseline-commit <full-or-resolvable-commit> `
+  --confirm-user-acceptance `
+  --reason "用户接受修订后的输入输出契约" `
+  --evidence docs/SHADOWBOT_INPUT_CONTRACT.md
+```
+
+Before running it, show the previous accepted baseline, the changed contract, evidence, downstream impact, and current Gate. The command requires a non-empty reason, an existing initial close for that Gate, an exact Git commit, and explicit user acceptance. It is available only while the project is still in its first G0-G5 delivery. After G5, use `gate-revalidate` instead.
+
+For G2, Task route synchronization reuses the existing review. `already_completed` is valid when the original G2 close already updated the route; `updated` repairs a route that was added or recovered later. A partial synchronization failure must be repaired without repeating the amendment event.
 
 ## G5 Revalidation
 
@@ -144,7 +166,7 @@ python <skill-dir>\scripts\rpa_collab.py `
   --evidence runner:migration_001.json
 ```
 
-Revalidation is available only after the initial G5 close and never changes `current_gate`.
+Revalidation is available only after the initial G5 close and never changes `current_gate`. It also refreshes `accepted_baseline` to the explicitly supplied commit or current `HEAD` when Git is available.
 When the active Task has a route containing the revalidated review,
 `gate-revalidate` records it in `completed_reviews` and returns the same
 `delivery_route_sync` result. A partial synchronization failure means the
@@ -319,6 +341,7 @@ Before saying Stage H is ready, check:
 - requirement and contract evidence;
 - Task AC, technical checks, notes, final summary, and delivery requirements;
 - Git commit and PR state;
+- accepted baseline versus current HEAD, including delivery-impacting and governance-only paths;
 - tests and runner result;
 - ShadowBot and business acceptance;
 - Project Gate close or revalidation event, when applicable;
@@ -342,6 +365,9 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not make `delivery_route` mandatory for legacy Tasks or for `archive-check`.
 - Do not write project Gate state under `.hermes/`; that namespace belongs to Hermes Agent.
 - Do not change a Gate without explicit user acceptance.
+- Do not report delivery as current when `status.delivery_baseline.requires_user_review=true`.
+- Do not use `gate-amendment` after the first G5 close or for G3-G5; use the normal Gate or revalidation path.
+- Do not silently replace an accepted contract: preserve the original close and append an amendment with the previous and new commit.
 - Do not report a Gate close or revalidation as fully synchronized until both the Project Gate and `delivery_route_sync` read-backs succeed.
 - Do not repeat a committed Gate operation to repair a failed Task route synchronization.
 - Do not archive a Task before `archive-check` returns ready.

@@ -162,6 +162,20 @@ class ProjectGateControllerTests(unittest.TestCase):
             text=True,
         ).stdout.strip()
 
+    def commit_file(self, relative_path: str, content: str, message: str) -> str:
+        path = self.project_root / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", relative_path], cwd=self.project_root, check=True)
+        subprocess.run(["git", "commit", "-m", message], cwd=self.project_root, check=True, capture_output=True)
+        return subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.project_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
     def test_safe_config_is_explicit_and_idempotent(self) -> None:
         first = MODULE.ensure_trellis_safe_config(self.project_root)
         second = MODULE.ensure_trellis_safe_config(self.project_root)
@@ -176,6 +190,7 @@ class ProjectGateControllerTests(unittest.TestCase):
         project_schema = json.loads((references / "project-gate.schema.json").read_text(encoding="utf-8"))
         delivery_schema = json.loads((references / "trellis-delivery.schema.json").read_text(encoding="utf-8"))
         self.assertEqual(project_schema["properties"]["schema_version"]["const"], 1)
+        self.assertIn("accepted_baseline", project_schema["properties"])
         self.assertIn("archive_evidence", delivery_schema["properties"])
         self.assertIn("delivery_route", delivery_schema["properties"])
         self.assertEqual(delivery_schema["properties"]["delivery_route"]["properties"]["entry"]["$ref"], "#/$defs/deliveryReview")
@@ -215,6 +230,135 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertEqual(status["selected_task"]["id"], "demo-delivery")
         self.assertEqual(status["runner"]["status"], "success")
         self.assertIn("legacy_gate_records", {item["code"] for item in status["warnings"]})
+
+    def test_legacy_project_without_baseline_remains_readable(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+
+        status = MODULE.build_status(self.project_root)
+
+        self.assertEqual(status["delivery_baseline"]["state"], "missing_accepted_baseline")
+        self.assertIn("missing_accepted_baseline", {item["code"] for item in status["warnings"]})
+
+    def test_gate_close_captures_exact_accepted_git_baseline(self) -> None:
+        commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+
+        result = MODULE.close_gate(gate_args(self.project_root, baseline_commit=commit))
+
+        baseline = result["read_back"]["accepted_baseline"]
+        self.assertEqual(baseline["commit"], commit)
+        self.assertEqual(baseline["gate"], "G0")
+        self.assertEqual(baseline["event"], "gate-close")
+        history = (self.project_root / ".project-gates" / "gate-history.md").read_text(encoding="utf-8")
+        self.assertIn(f"- accepted_commit: {commit}", history)
+
+    def test_status_classifies_governance_only_drift_without_user_review(self) -> None:
+        commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, baseline_commit=commit))
+
+        status = MODULE.build_status(self.project_root)
+
+        drift = status["delivery_baseline"]
+        self.assertEqual(drift["state"], "governance_only_drift")
+        self.assertFalse(drift["requires_user_review"])
+        self.assertEqual(drift["delivery_paths"], [])
+        self.assertTrue(any(path.startswith(".project-gates/") for path in drift["governance_paths"]))
+        self.assertTrue(MODULE.is_governance_path(".trellis/tasks/archive/2026-09/中文项目/prd.md"))
+
+    def test_status_flags_runtime_change_after_accepted_baseline(self) -> None:
+        commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, baseline_commit=commit))
+        changed_commit = self.commit_file("run.bat", "@echo off\npython runner.py\n", "change runtime entrypoint")
+
+        status = MODULE.build_status(self.project_root)
+
+        drift = status["delivery_baseline"]
+        self.assertEqual(drift["current_head"], changed_commit)
+        self.assertEqual(drift["state"], "unaccepted_delivery_drift")
+        self.assertTrue(drift["requires_user_review"])
+        self.assertIn("run.bat", drift["delivery_paths"])
+        self.assertEqual(MODULE.suggest_action(status)["recommended_action"], "review_unaccepted_drift")
+
+    def test_status_flags_uncommitted_contract_change(self) -> None:
+        commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, baseline_commit=commit))
+        contract = self.project_root / "docs" / "contract.md"
+        contract.parent.mkdir(parents=True)
+        contract.write_text("changed contract\n", encoding="utf-8")
+
+        drift = MODULE.build_status(self.project_root)["delivery_baseline"]
+
+        self.assertEqual(drift["state"], "unaccepted_delivery_drift")
+        self.assertIn("docs/contract.md", drift["working_tree_paths"])
+        self.assertIn("docs/contract.md", drift["delivery_paths"])
+
+    def test_status_reports_missing_accepted_commit(self) -> None:
+        self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project["accepted_baseline"] = {
+            "commit": "deadbeef",
+            "gate": "G2",
+            "event": "gate-close",
+            "event_id": "missing-commit",
+            "accepted_at": "2026-08-14T10:00:00+08:00",
+        }
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+
+        status = MODULE.build_status(self.project_root)
+
+        self.assertEqual(status["delivery_baseline"]["state"], "accepted_baseline_missing")
+        self.assertEqual(MODULE.suggest_action(status)["recommended_action"], "recover_accepted_baseline")
+
+    def test_legacy_history_infers_baseline_and_detects_runtime_drift(self) -> None:
+        accepted_commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project.update({"current_gate": "G5", "status": "operational"})
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        history_path = self.project_root / ".project-gates" / "gate-history.md"
+        history_path.write_text(
+            "# Project Gate History\n\n"
+            "## 2026-08-14T10:00:00+08:00 - G5 gate-close\n\n"
+            "- event: gate-close\n"
+            "- event_id: legacy-g5\n"
+            "- gate: G5\n"
+            "- result: accepted\n"
+            "- accepted_by: user\n"
+            f"- evidence: runner:legacy.json, commit:{accepted_commit}\n",
+            encoding="utf-8",
+        )
+        changed_commit = self.commit_file("run.bat", "@echo off\npython runner.py\n", "post acceptance runtime change")
+
+        status = MODULE.build_status(self.project_root)
+
+        drift = status["delivery_baseline"]
+        self.assertEqual(drift["source"], "history_evidence")
+        self.assertEqual(drift["accepted"]["commit"], accepted_commit)
+        self.assertEqual(drift["current_head"], changed_commit)
+        self.assertEqual(drift["state"], "unaccepted_delivery_drift")
+        self.assertIn("run.bat", drift["delivery_paths"])
+        self.assertIn("accepted_baseline_inferred", {item["code"] for item in status["warnings"]})
+
+    def test_cli_status_emits_utf8_for_chinese_project_path(self) -> None:
+        chinese_root = self.project_root / "中文项目"
+        write_workspace(chinese_root)
+        (chinese_root / "AGENTS.md").write_text("# 中文项目\n", encoding="utf-8")
+        MODULE.bootstrap_collaboration(bootstrap_args(chinese_root, project_name="中文项目"))
+
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "rpa_collab.py"), "--project-root", str(chinese_root), "status"],
+            check=True,
+            capture_output=True,
+        )
+        output = proc.stdout.decode("utf-8")
+        self.assertIn("中文项目", output)
+        self.assertEqual(json.loads(output)["project_gate"]["project_id"], "中文项目")
 
     def test_delivery_route_is_optional_for_legacy_task(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
@@ -458,13 +602,184 @@ class ProjectGateControllerTests(unittest.TestCase):
         with self.assertRaises(MODULE.CollabError):
             MODULE.close_gate(gate_args(self.project_root, event_id="second"))
 
+    def test_gate_amendment_updates_baseline_without_rewinding_or_repeating_review(self) -> None:
+        original_commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G0", event_id="close-g0", baseline_commit=original_commit))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G1", event_id="close-g1", baseline_commit=original_commit))
+        MODULE.set_delivery_route(
+            route_args(
+                self.project_root,
+                entry="G2",
+                require_review=["G2", "G3", "G4", "G5"],
+            )
+        )
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G2", event_id="close-g2", baseline_commit=original_commit))
+        amended_commit = self.commit_file("docs/contract.md", "contract v2\n", "amend accepted contract")
+
+        result = MODULE.amend_gate(
+            gate_args(
+                self.project_root,
+                gate="G2",
+                event_id="amend-g2",
+                reason="User accepted the corrected contract",
+                baseline_commit=amended_commit,
+            )
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["current_gate_unchanged"])
+        self.assertEqual(result["read_back"]["current_gate"], "G3")
+        self.assertEqual(result["previous_baseline"]["commit"], original_commit)
+        self.assertEqual(result["accepted_baseline"]["commit"], amended_commit)
+        self.assertEqual(result["accepted_baseline"]["event"], "gate-amendment")
+        self.assertEqual(result["delivery_route_sync"]["status"], "already_completed")
+        history = (self.project_root / ".project-gates" / "gate-history.md").read_text(encoding="utf-8")
+        self.assertIn("- event: gate-amendment", history)
+        self.assertIn(f"- previous_accepted_commit: {original_commit}", history)
+        self.assertIn(f"- accepted_commit: {amended_commit}", history)
+        with self.assertRaisesRegex(MODULE.CollabError, "event_id already exists"):
+            MODULE.amend_gate(
+                gate_args(
+                    self.project_root,
+                    gate="G2",
+                    event_id="amend-g2",
+                    reason="User accepted the corrected contract",
+                    baseline_commit=amended_commit,
+                )
+            )
+
+    def test_gate_amendment_repairs_late_task_route_review(self) -> None:
+        original_commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G0", event_id="late-close-g0", baseline_commit=original_commit))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G1", event_id="late-close-g1", baseline_commit=original_commit))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G2", event_id="late-close-g2", baseline_commit=original_commit))
+        MODULE.set_delivery_route(
+            route_args(
+                self.project_root,
+                entry="G2",
+                require_review=["G2", "G3", "G4", "G5"],
+            )
+        )
+        amended_commit = self.commit_file("docs/late-contract.md", "contract v2\n", "amend late route contract")
+
+        result = MODULE.amend_gate(
+            gate_args(
+                self.project_root,
+                gate="G2",
+                event_id="late-amend-g2",
+                reason="User accepted the late route contract",
+                baseline_commit=amended_commit,
+            )
+        )
+
+        self.assertEqual(result["delivery_route_sync"]["status"], "updated")
+        self.assertEqual(result["delivery_route_sync"]["completed_reviews"], ["G2"])
+        self.assertEqual(result["read_back"]["current_gate"], "G3")
+
+    def test_gate_amendment_requires_closed_gate_reason_confirmation_and_git(self) -> None:
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        with self.assertRaisesRegex(MODULE.CollabError, "confirm-user-acceptance"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G0", confirm_user_acceptance=False))
+        with self.assertRaisesRegex(MODULE.CollabError, "non-empty reason"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G0", reason=""))
+        with self.assertRaisesRegex(MODULE.CollabError, "initial gate-close"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G0"))
+
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G0", event_id="close-before-no-git"))
+        with self.assertRaisesRegex(MODULE.CollabError, "Cannot resolve Git commit"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G0", event_id="amend-without-git"))
+
+    def test_gate_amendment_rejects_non_contract_gate_and_operational_project(self) -> None:
+        commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G0", event_id="close-g0", baseline_commit=commit))
+        with self.assertRaisesRegex(MODULE.CollabError, "only for G0, G1, or G2"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G3", event_id="bad-g3", baseline_commit=commit))
+
+        project_path = self.project_root / ".project-gates" / "project.json"
+        project = json.loads(project_path.read_text(encoding="utf-8"))
+        project.update({"current_gate": "G5", "status": "active"})
+        project_path.write_text(json.dumps(project), encoding="utf-8")
+        MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="close-g5", baseline_commit=commit))
+        with self.assertRaisesRegex(MODULE.CollabError, "before the first G5 close"):
+            MODULE.amend_gate(gate_args(self.project_root, gate="G0", event_id="amend-after-g5", baseline_commit=commit))
+
+    def test_cli_exposes_gate_amendment_and_baseline_commit(self) -> None:
+        parsed = CLI_MODULE.build_parser().parse_args(
+            [
+                "--project-root",
+                str(self.project_root),
+                "gate-amendment",
+                "--gate",
+                "G2",
+                "--baseline-commit",
+                "abc1234",
+                "--reason",
+                "Corrected contract",
+                "--evidence",
+                "AGENTS.md",
+                "--confirm-user-acceptance",
+            ]
+        )
+        self.assertEqual(parsed.command, "gate-amendment")
+        self.assertEqual(parsed.gate, "G2")
+        self.assertEqual(parsed.baseline_commit, "abc1234")
+
+    def test_cli_gate_amendment_appends_event_and_keeps_current_gate(self) -> None:
+        original_commit = self.init_git()
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(
+            gate_args(
+                self.project_root,
+                accepted_gate="G0",
+                event_id="cli-close-g0",
+                baseline_commit=original_commit,
+            )
+        )
+        amended_commit = self.commit_file("docs/scope.md", "scope v2\n", "amend scope")
+
+        proc = subprocess.run(
+            [
+                sys.executable,
+                str(SCRIPT_DIR / "rpa_collab.py"),
+                "--project-root",
+                str(self.project_root),
+                "--task",
+                "demo-delivery",
+                "gate-amendment",
+                "--gate",
+                "G0",
+                "--baseline-commit",
+                amended_commit,
+                "--reason",
+                "User accepted corrected scope",
+                "--evidence",
+                "docs/scope.md",
+                "--event-id",
+                "cli-amend-g0",
+                "--confirm-user-acceptance",
+            ],
+            check=True,
+            capture_output=True,
+        )
+        result = json.loads(proc.stdout.decode("utf-8"))
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["event"]["event_id"], "cli-amend-g0")
+        self.assertEqual(result["read_back"]["current_gate"], "G1")
+        self.assertEqual(result["read_back"]["accepted_baseline"]["commit"], amended_commit)
+
     def test_g5_close_becomes_operational_and_revalidation_keeps_g5(self) -> None:
+        commit = self.init_git()
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         project_path = self.project_root / ".project-gates" / "project.json"
         project = json.loads(project_path.read_text(encoding="utf-8"))
         project["current_gate"] = "G5"
         project_path.write_text(json.dumps(project), encoding="utf-8")
-        close_result = MODULE.close_gate(gate_args(self.project_root, accepted_gate="G5", event_id="g5-close"))
+        close_result = MODULE.close_gate(
+            gate_args(self.project_root, accepted_gate="G5", event_id="g5-close", baseline_commit=commit)
+        )
         self.assertEqual(close_result["read_back"]["status"], "operational")
         MODULE.set_delivery_route(
             route_args(
@@ -484,6 +799,8 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertEqual(result["read_back"]["current_gate"], "G5")
         self.assertTrue(result["current_gate_unchanged"])
         self.assertEqual(result["delivery_route_sync"]["status"], "updated")
+        self.assertEqual(result["read_back"]["accepted_baseline"]["event"], "gate-revalidation")
+        self.assertEqual(result["read_back"]["accepted_baseline"]["commit"], commit)
         task = json.loads(
             (self.project_root / ".trellis" / "tasks" / "demo-delivery" / "task.json").read_text(
                 encoding="utf-8"

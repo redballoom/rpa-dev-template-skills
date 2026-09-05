@@ -20,6 +20,7 @@ def add_trellis_init_args(parser: argparse.ArgumentParser) -> None:
 
 def add_evidence_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--evidence", action="append", default=[])
+    parser.add_argument("--baseline-commit", help="Exact Git commit accepted by the user; defaults to HEAD when available")
     parser.add_argument("--timestamp")
     parser.add_argument("--event-id")
     parser.add_argument("--reason", default="")
@@ -53,6 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     revalidate = subparsers.add_parser("gate-revalidate", help="Append a Gate revalidation without rewinding the project")
     revalidate.add_argument("--gate", choices=controller.GATES, required=True)
     add_evidence_args(revalidate)
+
+    amend = subparsers.add_parser("gate-amendment", help="Amend an accepted G0-G2 before the first G5 close without rewinding the project")
+    amend.add_argument("--gate", choices=controller.AMENDABLE_GATES, required=True)
+    add_evidence_args(amend)
 
     archive = subparsers.add_parser("archive-check", help="Check evidence before calling Trellis archive")
     archive.add_argument("--user-accepted", action="store_true")
@@ -98,6 +103,11 @@ def main(argv: list[str] | None = None) -> int:
                 return 3
         elif args.command == "gate-revalidate":
             result = controller.revalidate_gate(args)
+            controller.print_json(result)
+            if not result.get("ok", True):
+                return 3
+        elif args.command == "gate-amendment":
+            result = controller.amend_gate(args)
             controller.print_json(result)
             if not result.get("ok", True):
                 return 3

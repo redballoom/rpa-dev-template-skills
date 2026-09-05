@@ -26,11 +26,23 @@ NEXT_GATE = {"G0": "G1", "G1": "G2", "G2": "G3", "G3": "G4", "G4": "G5", "G5": "
 PROJECT_STATUSES = ("active", "operational", "archived", "terminated")
 DELIVERY_STATES = ("paused", "blocked", "in_review", "cancelled")
 DELIVERY_REVIEWS = ("G2", "G3", "G4", "G5")
+AMENDABLE_GATES = ("G0", "G1", "G2")
+BASELINE_EVENT_TYPES = ("gate-close", "gate-revalidation", "gate-amendment")
 DEFAULT_TRELLIS_REGISTRY = "gh:redballoom/rpa-trellis-spec-templates"
 DEFAULT_TRELLIS_TEMPLATE = "rpa-python-shadowbot"
 SYSTEM_TASK_IDS = {"00-bootstrap-guidelines"}
 PROJECT_GATE_DIR = ".project-gates"
 LEGACY_PROJECT_GATE_DIR = ".hermes"
+GOVERNANCE_PATH_PREFIXES = (
+    ".project-gates/",
+    ".trellis/",
+    ".agents/",
+    ".codex/",
+)
+GOVERNANCE_PATHS = {
+    ".gitignore",
+    "AGENTS.md",
+}
 
 
 class CollabError(RuntimeError):
@@ -157,8 +169,35 @@ def ensure_trellis_safe_config(project_root: Path, *, dry_run: bool = False) -> 
     return {"path": str(config_path), "changed": changed, "verified": verified, "dry_run": dry_run}
 
 
+def validate_accepted_baseline(value: Any, path: Path) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise CollabError(f"{path} accepted_baseline must be a JSON object")
+    allowed = {"commit", "gate", "event", "event_id", "accepted_at"}
+    extra = sorted(set(value) - allowed)
+    if extra:
+        raise CollabError(f"{path} accepted_baseline contains unsupported fields: {extra}")
+    commit = value.get("commit")
+    if not isinstance(commit, str) or not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit):
+        raise CollabError(f"{path} accepted_baseline.commit must be a Git commit hash")
+    if value.get("gate") not in GATES:
+        raise CollabError(f"{path} accepted_baseline.gate must be one of G0-G5")
+    if value.get("event") not in BASELINE_EVENT_TYPES:
+        raise CollabError(f"{path} accepted_baseline.event is invalid")
+    event_id_value = value.get("event_id")
+    if not isinstance(event_id_value, str) or not event_id_value.strip():
+        raise CollabError(f"{path} accepted_baseline.event_id must be non-empty")
+    accepted_at = value.get("accepted_at")
+    if not isinstance(accepted_at, str):
+        raise CollabError(f"{path} accepted_baseline.accepted_at is required")
+    try:
+        datetime.fromisoformat(accepted_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise CollabError(f"{path} accepted_baseline.accepted_at is invalid: {accepted_at}") from exc
+    return value
+
+
 def validate_project(project: dict[str, Any], path: Path) -> dict[str, Any]:
-    allowed = {"schema_version", "project_id", "current_gate", "status", "updated_at"}
+    allowed = {"schema_version", "project_id", "current_gate", "status", "updated_at", "accepted_baseline"}
     extra = sorted(set(project) - allowed)
     if extra:
         raise CollabError(f"{path} contains unsupported fields: {extra}")
@@ -176,6 +215,8 @@ def validate_project(project: dict[str, Any], path: Path) -> dict[str, Any]:
         datetime.fromisoformat(project["updated_at"].replace("Z", "+00:00"))
     except ValueError as exc:
         raise CollabError(f"{path} has invalid updated_at: {project['updated_at']}") from exc
+    if "accepted_baseline" in project:
+        validate_accepted_baseline(project["accepted_baseline"], path)
     return project
 
 
@@ -563,16 +604,160 @@ def latest_runner(project_root: Path) -> dict[str, Any] | None:
 
 
 def run_git(project_root: Path, args: list[str]) -> tuple[int, str]:
-    proc = subprocess.run(["git", *args], cwd=project_root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    try:
+        proc = subprocess.run(["git", *args], cwd=project_root, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    except OSError:
+        return 127, ""
     return proc.returncode, proc.stdout.strip()
+
+
+def resolve_git_commit(project_root: Path, reference: str | None = None, *, required: bool = False) -> str | None:
+    target = reference or "HEAD"
+    code, commit = run_git(project_root, ["rev-parse", "--verify", f"{target}^{{commit}}"])
+    if code == 0 and commit:
+        return commit.splitlines()[-1].strip().lower()
+    if reference or required:
+        raise CollabError(f"Cannot resolve Git commit: {target}")
+    return None
+
+
+def git_paths(project_root: Path, args: list[str]) -> list[str]:
+    code, output = run_git(project_root, ["-c", "core.quotepath=false", *args])
+    if code != 0 or not output:
+        return []
+    return sorted({line.strip().replace("\\", "/") for line in output.splitlines() if line.strip()})
+
+
+def working_tree_paths(project_root: Path) -> list[str]:
+    paths = set(git_paths(project_root, ["diff", "--name-only"]))
+    paths.update(git_paths(project_root, ["diff", "--cached", "--name-only"]))
+    paths.update(git_paths(project_root, ["ls-files", "--others", "--exclude-standard"]))
+    return sorted(paths)
 
 
 def git_info(project_root: Path) -> dict[str, Any]:
     code, head = run_git(project_root, ["log", "-1", "--oneline"])
     if code != 0:
         return {"available": False}
-    _, dirty = run_git(project_root, ["status", "--short"])
-    return {"available": True, "head": head, "dirty": bool(dirty)}
+    head_sha = resolve_git_commit(project_root, required=True)
+    dirty_paths = working_tree_paths(project_root)
+    return {"available": True, "head": head, "head_sha": head_sha, "dirty": bool(dirty_paths), "dirty_paths": dirty_paths}
+
+
+def is_governance_path(value: str) -> bool:
+    path = value.strip().replace("\\", "/")
+    if path.startswith("./"):
+        path = path[2:]
+    return path in GOVERNANCE_PATHS or any(path.startswith(prefix) for prefix in GOVERNANCE_PATH_PREFIXES)
+
+
+def infer_accepted_baseline_from_history(project_root: Path) -> dict[str, Any] | None:
+    _, history_path = project_gate_paths(project_root)
+    if not history_path.exists():
+        return None
+    sections = re.split(r"(?m)^## ", history_path.read_text(encoding="utf-8"))
+    for raw_section in reversed(sections[1:]):
+        section = "## " + raw_section
+        if "- result: accepted" not in section:
+            continue
+        header = re.search(r"^## (\S+) - (G[0-5])", section)
+        event = re.search(r"(?m)^- event: (gate-close|gate-revalidation|gate-amendment)\s*$", section)
+        stable_id = re.search(r"(?m)^- event_id: (\S+)\s*$", section)
+        if not header or not event or not stable_id:
+            continue
+        accepted_commits = re.findall(r"(?m)^- accepted_commit: ([0-9a-fA-F]{7,64})\s*$", section)
+        evidence_commits = re.findall(r"commit:([0-9a-fA-F]{7,64})", section)
+        for reference in reversed(accepted_commits or evidence_commits):
+            try:
+                commit = resolve_git_commit(project_root, reference)
+            except CollabError:
+                continue
+            if commit:
+                return {
+                    "commit": commit,
+                    "gate": header.group(2),
+                    "event": event.group(1),
+                    "event_id": stable_id.group(1),
+                    "accepted_at": header.group(1),
+                }
+    return None
+
+
+def build_delivery_baseline(project_root: Path, project: dict[str, Any] | None, git: dict[str, Any]) -> dict[str, Any]:
+    recorded = project.get("accepted_baseline") if project else None
+    inferred = infer_accepted_baseline_from_history(project_root) if project and recorded is None and git.get("available") else None
+    accepted = recorded or inferred
+    base: dict[str, Any] = {
+        "accepted": accepted,
+        "source": "project_snapshot" if recorded else ("history_evidence" if inferred else "unavailable"),
+        "current_head": git.get("head_sha") if git.get("available") else None,
+        "state": "unavailable",
+        "head_relation": "unknown",
+        "committed_paths": [],
+        "working_tree_paths": git.get("dirty_paths", []) if git.get("available") else [],
+        "governance_paths": [],
+        "delivery_paths": [],
+        "requires_user_review": False,
+        "next_owner": "agent",
+    }
+    if project is None:
+        base.update({"state": "missing_project_gate", "next_owner": "user_or_agent"})
+        return base
+    if accepted is None:
+        base.update({"state": "missing_accepted_baseline", "next_owner": "user"})
+        return base
+    if not git.get("available"):
+        base.update({"state": "git_unavailable", "next_owner": "environment_owner"})
+        return base
+
+    accepted_commit = str(accepted["commit"])
+    code, _ = run_git(project_root, ["cat-file", "-e", f"{accepted_commit}^{{commit}}"])
+    if code != 0:
+        base.update({"state": "accepted_baseline_missing", "next_owner": "agent"})
+        return base
+
+    current_head = str(git["head_sha"])
+    ancestor_code, _ = run_git(project_root, ["merge-base", "--is-ancestor", accepted_commit, current_head])
+    head_relation = "same" if accepted_commit == current_head else ("descendant" if ancestor_code == 0 else "diverged")
+    committed = [] if accepted_commit == current_head else git_paths(
+        project_root,
+        ["diff", "--name-only", "--diff-filter=ACDMRTUXB", f"{accepted_commit}..{current_head}"],
+    )
+    working = list(base["working_tree_paths"])
+    changed = sorted(set(committed) | set(working))
+    governance = [path for path in changed if is_governance_path(path)]
+    delivery = [path for path in changed if not is_governance_path(path)]
+
+    if head_relation == "diverged":
+        state = "history_diverged"
+        requires_review = True
+        next_owner = "user_and_agent"
+    elif delivery:
+        state = "unaccepted_delivery_drift"
+        requires_review = True
+        next_owner = "agent"
+    elif changed or accepted_commit != current_head:
+        state = "governance_only_drift"
+        requires_review = False
+        next_owner = "agent"
+    else:
+        state = "aligned"
+        requires_review = False
+        next_owner = "none"
+
+    base.update(
+        {
+            "state": state,
+            "head_relation": head_relation,
+            "committed_paths": committed,
+            "working_tree_paths": working,
+            "governance_paths": governance,
+            "delivery_paths": delivery,
+            "requires_user_review": requires_review,
+            "next_owner": next_owner,
+        }
+    )
+    return base
 
 
 def legacy_gate_records(project_root: Path) -> list[str]:
@@ -641,6 +826,26 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         warnings.append({"code": "unsafe_session_auto_commit", "message": "Trellis config is not explicitly session_auto_commit: false"})
     if selection_error and tasks:
         warnings.append({"code": "task_selection", "message": selection_error})
+    git = git_info(project_root)
+    delivery_baseline = build_delivery_baseline(project_root, project, git)
+    baseline_state = delivery_baseline["state"]
+    if delivery_baseline["source"] == "history_evidence":
+        warnings.append(
+            {
+                "code": "accepted_baseline_inferred",
+                "message": "Accepted baseline was inferred from legacy Gate history evidence; persist it at the next accepted Gate event",
+            }
+        )
+    baseline_messages = {
+        "missing_accepted_baseline": "No accepted Git baseline is recorded; the next accepted Gate event must capture one",
+        "git_unavailable": "An accepted baseline exists but Git is unavailable in this project",
+        "accepted_baseline_missing": "The recorded accepted baseline commit does not exist in this Git repository",
+        "history_diverged": "Current HEAD does not descend from the accepted baseline; review the Git history before delivery",
+        "unaccepted_delivery_drift": "Runtime, contract, documentation, or business files changed after the accepted baseline",
+        "governance_only_drift": "Only recognized governance files changed after the accepted baseline",
+    }
+    if baseline_state in baseline_messages:
+        warnings.append({"code": baseline_state, "message": baseline_messages[baseline_state]})
     return {
         "ok": True,
         "project_root": str(project_root),
@@ -651,7 +856,8 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
         "legacy_project_gate_records": legacy_project_gates,
         "warnings": warnings,
         "runner": latest_runner(project_root),
-        "git": git_info(project_root),
+        "git": git,
+        "delivery_baseline": delivery_baseline,
     }
 
 
@@ -671,6 +877,14 @@ def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
         action, reason = "check_delivery_route", "Correct the Issue-scoped Task route without changing the project Gate."
     elif "multiple_active_tasks" in codes:
         action, reason = "inspect_tasks", "Resolve the active engineering Task policy before continuing."
+    elif "history_diverged" in codes:
+        action, reason = "review_git_history", "Current HEAD diverged from the accepted baseline; inspect history before any Gate or archive action."
+    elif "unaccepted_delivery_drift" in codes:
+        action, reason = "review_unaccepted_drift", "Delivery-impacting files changed after the accepted baseline; validate the change before reporting delivery."
+    elif "accepted_baseline_missing" in codes:
+        action, reason = "recover_accepted_baseline", "Recover or explicitly replace the missing accepted commit before relying on delivery status."
+    elif "missing_accepted_baseline" in codes and status.get("project_gate", {}).get("current_gate") != "G0":
+        action, reason = "record_accepted_baseline", "The project advanced without a Git acceptance baseline; capture one at the next explicit Gate acceptance."
     elif status.get("project_gate", {}).get("current_gate") == "G5":
         action, reason = "continue_task_or_revalidate", "Keep the project at G5; use a Task for maintenance or Gate revalidation for major change."
     else:
@@ -729,7 +943,43 @@ def history_has_gate_close(project_root: Path, gate: str) -> bool:
     return False
 
 
-def append_gate_event(project_root: Path, *, event_type: str, gate: str, accepted_by: str, timestamp: str, stable_id: str, task: str | None, evidence: list[str], reason: str, dry_run: bool = False) -> dict[str, Any]:
+def make_accepted_baseline(
+    project_root: Path,
+    *,
+    gate: str,
+    event_type: str,
+    stable_id: str,
+    timestamp: str,
+    baseline_commit: str | None = None,
+    required: bool = False,
+) -> dict[str, Any] | None:
+    commit = resolve_git_commit(project_root, baseline_commit, required=required)
+    if commit is None:
+        return None
+    return {
+        "commit": commit,
+        "gate": gate,
+        "event": event_type,
+        "event_id": stable_id,
+        "accepted_at": timestamp,
+    }
+
+
+def append_gate_event(
+    project_root: Path,
+    *,
+    event_type: str,
+    gate: str,
+    accepted_by: str,
+    timestamp: str,
+    stable_id: str,
+    task: str | None,
+    evidence: list[str],
+    reason: str,
+    previous_baseline: dict[str, Any] | None = None,
+    accepted_baseline: dict[str, Any] | None = None,
+    dry_run: bool = False,
+) -> dict[str, Any]:
     _, history_path = project_gate_paths(project_root)
     existing = history_path.read_text(encoding="utf-8") if history_path.exists() else "# Project Gate History\n\n"
     if history_has_event(existing, stable_id):
@@ -741,6 +991,12 @@ def append_gate_event(project_root: Path, *, event_type: str, gate: str, accepte
         lines.append(f"- tasks: {one_line(task)}")
     if evidence:
         lines.append(f"- evidence: {', '.join(one_line(item) for item in evidence)}")
+    if previous_baseline:
+        lines.append(f"- previous_accepted_commit: {one_line(previous_baseline['commit'])}")
+    elif event_type == "gate-amendment":
+        lines.append("- previous_accepted_commit: unavailable")
+    if accepted_baseline:
+        lines.append(f"- accepted_commit: {one_line(accepted_baseline['commit'])}")
     lines.extend(["", ""])
     if not dry_run:
         history_path.parent.mkdir(parents=True, exist_ok=True)
@@ -801,10 +1057,34 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
         dry_run=True,
     )
     result_gate = NEXT_GATE[args.accepted_gate]
-    event = append_gate_event(project_root, event_type="gate-close", gate=args.accepted_gate, accepted_by="user", timestamp=timestamp, stable_id=stable_id, task=task_id(task_file, task_data) if task_file else None, evidence=refs, reason=args.reason, dry_run=args.dry_run)
+    previous_baseline = project.get("accepted_baseline")
+    accepted_baseline = make_accepted_baseline(
+        project_root,
+        gate=args.accepted_gate,
+        event_type="gate-close",
+        stable_id=stable_id,
+        timestamp=timestamp,
+        baseline_commit=getattr(args, "baseline_commit", None),
+    )
+    event = append_gate_event(
+        project_root,
+        event_type="gate-close",
+        gate=args.accepted_gate,
+        accepted_by="user",
+        timestamp=timestamp,
+        stable_id=stable_id,
+        task=task_id(task_file, task_data) if task_file else None,
+        evidence=refs,
+        reason=args.reason,
+        previous_baseline=previous_baseline,
+        accepted_baseline=accepted_baseline,
+        dry_run=args.dry_run,
+    )
     project["current_gate"] = result_gate
     if args.accepted_gate == "G5":
         project["status"] = "operational"
+    if accepted_baseline:
+        project["accepted_baseline"] = accepted_baseline
     project["updated_at"] = timestamp
     if not args.dry_run:
         write_json_atomic(project_path, project)
@@ -850,6 +1130,7 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate revalidation requires --confirm-user-acceptance")
     project_root = Path(args.project_root).resolve()
+    project_path, _ = project_gate_paths(project_root)
     project = read_project_gate(project_root)
     if project["current_gate"] != "G5" or project["status"] != "operational":
         raise CollabError("Gate revalidation is available only after the first G5 close")
@@ -865,7 +1146,34 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
         project,
         dry_run=True,
     )
-    event = append_gate_event(project_root, event_type="gate-revalidation", gate=args.gate, accepted_by="user", timestamp=timestamp, stable_id=stable_id, task=task_id(task_file, task_data) if task_file else None, evidence=refs, reason=args.reason, dry_run=args.dry_run)
+    previous_baseline = project.get("accepted_baseline")
+    accepted_baseline = make_accepted_baseline(
+        project_root,
+        gate=args.gate,
+        event_type="gate-revalidation",
+        stable_id=stable_id,
+        timestamp=timestamp,
+        baseline_commit=getattr(args, "baseline_commit", None),
+    )
+    event = append_gate_event(
+        project_root,
+        event_type="gate-revalidation",
+        gate=args.gate,
+        accepted_by="user",
+        timestamp=timestamp,
+        stable_id=stable_id,
+        task=task_id(task_file, task_data) if task_file else None,
+        evidence=refs,
+        reason=args.reason,
+        previous_baseline=previous_baseline,
+        accepted_baseline=accepted_baseline,
+        dry_run=args.dry_run,
+    )
+    if accepted_baseline:
+        project["accepted_baseline"] = accepted_baseline
+    project["updated_at"] = timestamp
+    if not args.dry_run:
+        write_json_atomic(project_path, project)
     if args.dry_run:
         route_sync = route_preflight
     else:
@@ -901,6 +1209,107 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
         result["error"] = (
             "Project Gate revalidation event was committed, but Task delivery_route synchronization failed. "
             "Do not repeat gate-revalidate; repair the Task route and read back both authorities."
+        )
+    return result
+
+
+def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.confirm_user_acceptance:
+        raise CollabError("Gate amendment requires --confirm-user-acceptance")
+    if args.gate not in AMENDABLE_GATES:
+        raise CollabError("Gate amendment is available only for G0, G1, or G2")
+    if not str(args.reason).strip():
+        raise CollabError("Gate amendment requires a non-empty reason")
+
+    project_root = Path(args.project_root).resolve()
+    project_path, _ = project_gate_paths(project_root)
+    project = read_project_gate(project_root)
+    if project["status"] != "active" or history_has_gate_close(project_root, "G5"):
+        raise CollabError("Gate amendment is available only before the first G5 close; use gate-revalidate afterward")
+    if not history_has_gate_close(project_root, args.gate):
+        raise CollabError(f"Cannot amend {args.gate} before its initial gate-close event")
+    if GATES.index(project["current_gate"]) <= GATES.index(args.gate):
+        raise CollabError(f"Cannot amend {args.gate} while current_gate is {project['current_gate']}")
+
+    refs = require_evidence(project_root, args.evidence)
+    timestamp = args.timestamp or now_iso()
+    stable_id = event_id("gate-amendment", args.gate, timestamp, args)
+    task_file, task_data = match_task(project_root, args.task) if args.task or find_task_files(project_root) else (None, {})
+    route_preflight = sync_delivery_route_review(
+        project_root,
+        task_file,
+        task_data,
+        args.gate,
+        project,
+        dry_run=True,
+    )
+    previous_baseline = project.get("accepted_baseline")
+    accepted_baseline = make_accepted_baseline(
+        project_root,
+        gate=args.gate,
+        event_type="gate-amendment",
+        stable_id=stable_id,
+        timestamp=timestamp,
+        baseline_commit=getattr(args, "baseline_commit", None),
+        required=True,
+    )
+    event = append_gate_event(
+        project_root,
+        event_type="gate-amendment",
+        gate=args.gate,
+        accepted_by="user",
+        timestamp=timestamp,
+        stable_id=stable_id,
+        task=task_id(task_file, task_data) if task_file else None,
+        evidence=refs,
+        reason=args.reason,
+        previous_baseline=previous_baseline,
+        accepted_baseline=accepted_baseline,
+        dry_run=args.dry_run,
+    )
+    if event["duplicate"]:
+        raise CollabError(f"Gate amendment event_id already exists: {stable_id}")
+    project["accepted_baseline"] = accepted_baseline
+    project["updated_at"] = timestamp
+    if not args.dry_run:
+        write_json_atomic(project_path, project)
+    if args.dry_run:
+        route_sync = route_preflight
+    else:
+        try:
+            route_sync = sync_delivery_route_review(
+                project_root,
+                task_file,
+                task_data,
+                args.gate,
+                project,
+            )
+        except (CollabError, OSError) as exc:
+            route_sync = {
+                "status": "failed",
+                "review": args.gate,
+                "task_file": str(task_file) if task_file else None,
+                "task_id": task_id(task_file, task_data) if task_file else None,
+                "error": str(exc),
+                "dry_run": False,
+            }
+    synchronized = route_sync["status"] != "failed"
+    result = {
+        "ok": synchronized,
+        "event": event,
+        "project": project,
+        "previous_baseline": previous_baseline,
+        "accepted_baseline": accepted_baseline,
+        "current_gate_unchanged": True,
+        "read_back": read_project_gate(project_root),
+        "delivery_route_sync": route_sync,
+        "dry_run": args.dry_run,
+    }
+    if not synchronized:
+        result["partial_commit"] = True
+        result["error"] = (
+            "Project Gate amendment was committed, but Task delivery_route synchronization failed. "
+            "Do not repeat gate-amendment; repair the Task route and read back both authorities."
         )
     return result
 
@@ -1128,4 +1537,9 @@ def migrate_project_gates(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def print_json(data: dict[str, Any]) -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except (OSError, ValueError):
+            pass
     print(json.dumps(data, ensure_ascii=False, indent=2))

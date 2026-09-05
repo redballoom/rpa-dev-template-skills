@@ -26,7 +26,7 @@ These skills are designed to work on any machine where the agent can access Git,
 4. Use `rpa-contract-business` to design `input_{run_id}.json`, `tasks[].type`, `payload`, outputs, exceptions, and tests.
 5. Confirm the contract, delivery requirements, and optional Issue-scoped G2-G5 delivery route before code implementation.
 6. Use `rpa-fix-loop` when a run fails.
-7. Use `rpa-delivery-close` to read Trellis Task evidence, record accepted project Gates, synchronize accepted reviews into an existing Task delivery route, guard Task archive, and complete Stage H. Sync Base only when configured.
+7. Use `rpa-delivery-close` to compare the accepted Git baseline with current HEAD, record Gate closes or pre-G5 amendments, synchronize accepted reviews into an existing Task delivery route, guard Task archive, and complete Stage H. Sync Base only when configured.
 
 ## Human-AI Collaboration
 
