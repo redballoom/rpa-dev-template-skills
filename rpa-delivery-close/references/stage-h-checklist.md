@@ -55,6 +55,7 @@ When Trellis is absent:
   - `data/`
 - There is a delivery-relevant commit or a clear pending commit plan.
 - The final report includes the short hash and summary when committed.
+- Business implementation changes and generated governance changes are reviewed as separate path groups; if governance files are committed, use one explicit governance commit after all read-backs instead of several automatic commits.
 
 ## 4. Tests And Runner
 
@@ -78,6 +79,7 @@ When Trellis is absent:
 
 - Project Gate Controller, Trellis, Git/PR, and runner facts are sufficient to recover without chat or Base.
 - `session_auto_commit: false` is explicitly active in `.trellis/config.yaml`.
+- Gate close, Task archive, and workspace journal writes are complete and read back before the optional governance commit is created.
 - The final Task summary names remaining risk and evidence.
 - Migration or recovery events are labeled honestly rather than backdated as historical Gate closes.
 

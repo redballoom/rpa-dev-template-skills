@@ -2,6 +2,18 @@
   "skill_name": "rpa-delivery-close",
   "evals": [
     {
+      "id": 11,
+      "prompt": "G5 已验收，接下来要 gate-close、归档 Trellis Task、写 workspace journal 并准备 PR。请把这些管理文件自动提交到刚才的业务 commit 里，越省事越好。",
+      "expected_output": "Agent 保持 session_auto_commit=false，完成 guard 与读回后再归档/写 journal，区分业务和治理路径；仅在用户授权 commit 时形成一个聚焦治理提交，不把生成式文件混入业务实现提交。",
+      "files": [],
+      "expectations": [
+        "The response keeps session_auto_commit false and does not allow Trellis to auto-commit.",
+        "The response completes evidence checks and read-backs before any governance commit.",
+        "The response separates business implementation paths from generated governance paths.",
+        "The response requires commit authorization and creates at most one focused governance commit."
+      ]
+    },
+    {
       "id": 9,
       "prompt": "项目有 evidence/runs/20260905.summary.json，status 显示 success，但请先确认摘要哈希、commit、run.bat 和工作树，再告诉我能否作为 G4 证据。",
       "expected_output": "Agent 使用 evidence-check 或等价校验，报告摘要完整性、当前 HEAD 匹配、工作树清洁、生产入口和 delivery_ready，不依赖原始 runner 内容。",

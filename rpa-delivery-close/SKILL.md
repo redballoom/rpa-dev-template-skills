@@ -363,6 +363,8 @@ Before saying Stage H is ready, check:
 
 Use `references/stage-h-checklist.md` for the detailed checklist.
 
+Before writing Gate close, Task archive, or workspace journal files, read `references/management-write-boundaries.md`. Keep `session_auto_commit: false`, finish the guarded read/write/read-back sequence first, then review the exact governance paths and create at most one explicit governance commit when the user authorized a commit. Do not mix generated Task/journal churn into the business implementation commit or obscure the business PR diff.
+
 ## Optional Base Projection
 
 Base is optional and read-only. Derive its summary from saved Project Gate Controller, Trellis, Git/PR, runner, and Issue facts. A Base write never closes a Gate, archives a Task, closes an Issue, merges a PR, or publishes a release.
@@ -385,5 +387,6 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not report a Gate close or revalidation as fully synchronized until both the Project Gate and `delivery_route_sync` read-backs succeed.
 - Do not repeat a committed Gate operation to repair a failed Task route synchronization.
 - Do not archive a Task before `archive-check` returns ready.
+- Do not let Trellis auto-commit Gate, archive, or journal changes; keep management writes reviewable and separate from business code.
 - Do not make Trellis, Project Gate Controller, Base, or Gitea a Python runner dependency.
 - Do not push, merge, close an Issue, publish, delete, or rewrite history without explicit authorization.
