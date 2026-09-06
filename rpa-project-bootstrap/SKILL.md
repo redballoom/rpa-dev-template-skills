@@ -44,11 +44,26 @@ python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "�
 2. Refuse to overwrite a non-empty target directory unless the user explicitly approves that exact path.
 3. Run the initializer.
 4. Read the final JSON result.
+   `status=success` requires completed core checks. `status=verified` is a recheck only, not a new initialization or a repaired Git commit. Treat `incomplete` (exit 2) as unverified and `error` (exit 1) as failure; neither authorizes the collaboration handoff. Read `stage`, `verification`, `target_modified`, and `recovery` before retrying.
 5. Read `post_init_checks` from the script result:
    - `doctor`
 6. If post-init checks were skipped or the template is older, report that clearly.
 7. Report initialized path, missing template files, commit hash, and doctor result.
 8. Do not implement business logic during initialization.
+
+## Failure and recheck
+
+Missing/wrong-type required files, failed doctor, malformed doctor output, or doctor reporting failure even with exit code 0 stop before Git initialization. Explicit `--skip-post-checks` and old templates without doctor return `incomplete`, not success. The clone's exact `template_commit` is reported when available.
+
+Preserve a partially initialized directory. After the reported problem is repaired, recheck it without recopying, scrubbing local configuration or committing:
+
+```powershell
+python "<skill_dir>\scripts\init_rpa_project.py" --name "项目名" --target "目标目录" --verify-existing
+```
+
+This executes the target's doctor and required-file checks; it does not modify project identity or finish a failed Git operation. For Git failure, inspect the preserved index/status and explicitly finish the intended commit after resolving identity or repository problems. For clone failure, retry against an empty target after resolving the source problem. Ordinary retry refuses a non-empty target; do not use `--force-overwrite` as automatic recovery. Read `recovery.verify_argv` as an argument array, not a shell command string.
+
+Core verification does not install Trellis, create a Task/Gate, or prove that remote deployment is reproducible. Perform the collaboration handoff only when a real workflow or explicitly scoped integration test requires it.
 
 ## Collaboration Bootstrap Handoff
 

@@ -216,7 +216,9 @@ def validate_template_files(root: Path) -> list[str]:
         "docs/examples",
         "tests",
     ]
-    return [item for item in required if not (root / item).exists()]
+    directories = {"docs/examples", "tests"}
+    return [item for item in required
+            if not ((root / item).is_dir() if item in directories else (root / item).is_file())]
 
 
 def init_git(root: Path, project_name: str) -> str:
@@ -250,6 +252,14 @@ def run_optional_python_tool(root: Path, args: list[str]) -> dict[str, Any]:
 
 def run_post_init_checks(root: Path) -> dict[str, Any]:
     doctor = run_optional_python_tool(root, ["tools/doctor.py"])
+    if doctor["status"] == "ok":
+        try:
+            report = json.loads(doctor["stdout"])
+            if not isinstance(report, dict) or report.get("status") != "ok":
+                raise ValueError("doctor did not report status=ok")
+        except (ValueError, TypeError) as exc:
+            doctor["status"] = "failed"
+            doctor["reason"] = str(exc)
     return {
         "doctor": doctor,
     }
@@ -266,14 +276,12 @@ def main() -> int:
     parser.add_argument("--skip-post-checks", action="store_true", help="Do not run the template doctor check")
     parser.add_argument("--force-overwrite", action="store_true", help="Allow copying into a non-empty target directory")
     parser.add_argument("--keep-temp", action="store_true", help="Keep temporary clone directory for debugging")
+    parser.add_argument("--verify-existing", action="store_true",
+                        help="Recheck an existing directory without recopying, configuring or committing it")
     args = parser.parse_args()
 
     project_name = args.name.strip()
-    if not project_name:
-        raise RuntimeError("--name cannot be empty")
-
     target = Path(args.target).expanduser().resolve()
-    ensure_empty_or_missing(target, force_overwrite=args.force_overwrite)
 
     tmp_dir: Path | None = None
     result: dict[str, Any] = {
@@ -285,32 +293,88 @@ def main() -> int:
         "missing_template_files": [],
         "git_commit": "",
         "post_init_checks": {},
+        "stage": "preflight",
+        "verification": "not_run",
+        "verification_only": args.verify_existing,
+        "target_modified": False,
+        "template_commit": "",
+        "recovery": {},
     }
 
     try:
-        tmp_dir = Path(tempfile.mkdtemp(prefix="rpa_template_"))
-        clone_dir = tmp_dir / "template"
-        clone_template(args.template_url, clone_dir, args.template_ref.strip())
-        copy_template(clone_dir, target)
-        replace_project_name(target, project_name)
-        update_project_json(target, project_name)
-        update_run_bat(target, project_name)
+        if not project_name:
+            raise RuntimeError("--name cannot be empty")
+        if args.verify_existing:
+            if args.force_overwrite or args.skip_post_checks:
+                raise RuntimeError("--verify-existing cannot be combined with --force-overwrite or --skip-post-checks")
+            if not target.is_dir():
+                raise RuntimeError("existing target directory is missing")
+        else:
+            ensure_empty_or_missing(target, force_overwrite=args.force_overwrite)
+            result["stage"] = "clone"
+            tmp_dir = Path(tempfile.mkdtemp(prefix="rpa_template_"))
+            clone_dir = tmp_dir / "template"
+            clone_template(args.template_url, clone_dir, args.template_ref.strip())
+            result["template_commit"] = run(["git", "rev-parse", "HEAD"], cwd=clone_dir).stdout.strip()
+            result["stage"] = "copy"
+            # Copy/configuration can fail halfway; preserve the directory for inspection.
+            result["target_modified"] = True
+            copy_template(clone_dir, target)
+            result["stage"] = "configure"
+            replace_project_name(target, project_name)
+            update_project_json(target, project_name)
+            update_run_bat(target, project_name)
+        result["stage"] = "required_files"
         missing = validate_template_files(target)
         result["missing_template_files"] = missing
+        if missing:
+            result["verification"] = "failed"
+            raise RuntimeError("required template files or directories are missing or have the wrong type")
+        result["stage"] = "doctor"
         if not args.skip_post_checks:
             result["post_init_checks"] = run_post_init_checks(target)
-        if not args.skip_git:
+        else:
+            result["post_init_checks"] = {"doctor": {"status": "skipped", "reason": "explicit --skip-post-checks", "returncode": None}}
+        doctor = result["post_init_checks"].get("doctor", {})
+        if doctor.get("status") == "failed" or doctor.get("returncode") not in (0, None):
+            result["verification"] = "failed"
+            raise RuntimeError("template doctor failed; no Git initialization or commit was attempted")
+        if doctor.get("status") != "ok" or doctor.get("returncode") != 0:
+            result["status"] = "incomplete"
+            result["verification"] = "unverified"
+            result["recovery"] = recovery_advice(target, project_name, "doctor")
+            print_json(result)
+            return 2
+        result["verification"] = "passed"
+        result["stage"] = "git"
+        if not args.skip_git and not args.verify_existing:
             result["git_commit"] = init_git(target, project_name)
-        result["status"] = "success"
+        result["status"] = "verified" if args.verify_existing else "success"
+        result["stage"] = "complete"
         print_json(result)
         return 0
     except Exception as exc:
         result["error"] = str(exc)
+        result["recovery"] = recovery_advice(target, project_name, result["stage"])
         print_json(result, stream=sys.stderr)
         return 1
     finally:
         if tmp_dir and tmp_dir.exists() and not args.keep_temp:
             shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def recovery_advice(target: Path, project_name: str, stage: str) -> dict[str, Any]:
+    return {
+        "failed_stage": stage,
+        "preserve_existing_files": True,
+        "next_action": (
+            "Fix the reported checks, then verify the existing directory. Verification does not finish a failed Git commit."
+            if target.is_dir() else "Resolve the preflight/clone error and retry with an empty target."
+        ),
+        "verify_argv": [sys.executable, str(Path(__file__).resolve()), "--name", project_name,
+                        "--target", str(target), "--verify-existing"] if target.is_dir() else [],
+        "git_recovery": "Inspect Git status/index before explicitly committing; do not recopy the template to repair Git." if stage == "git" else None,
+    }
 
 
 if __name__ == "__main__":
