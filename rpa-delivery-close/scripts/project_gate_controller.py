@@ -19,6 +19,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from delivery_version import delivery_version, is_record_path
 
 
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
@@ -674,7 +675,7 @@ def validate_evidence_summary(project_root: Path, path: Path) -> dict[str, Any]:
         errors.append(f"unexpected top-level fields: {', '.join(unexpected)}")
     if missing:
         errors.append(f"missing fields: {', '.join(missing)}")
-    if summary.get("schema_version") != 1:
+    if summary.get("schema_version") not in (1, 2):
         errors.append("unsupported schema_version")
 
     run = summary.get("run")
@@ -683,7 +684,12 @@ def validate_evidence_summary(project_root: Path, path: Path) -> dict[str, Any]:
     groups = summary.get("issue_groups")
     artifacts = summary.get("artifacts")
     integrity = summary.get("integrity")
-    _check_summary_fields(errors, run, "run")
+    if isinstance(run, dict) and summary.get("schema_version") == 2:
+        _check_summary_fields(errors, {k: v for k, v in run.items() if k != "delivery_tree_clean"}, "run")
+        if not isinstance(run.get("delivery_tree_clean"), bool):
+            errors.append("delivery_tree_clean must be boolean for schema 2")
+    else:
+        _check_summary_fields(errors, run, "run")
     _check_summary_fields(errors, runtime, "runtime")
     _check_summary_fields(errors, runtime.get("interpreter") if isinstance(runtime, dict) else None, "interpreter")
     _check_summary_fields(errors, counts, "counts")
@@ -774,9 +780,13 @@ def validate_evidence_summary(project_root: Path, path: Path) -> dict[str, Any]:
     production_entrypoint = runtime.get("entrypoint") == "run.bat"
     accepted_status = status in {"success", "warning"}
     working_tree_clean = run.get("working_tree_clean") is True
+    run_delivery_clean = (run.get("delivery_tree_clean") is True
+                          if summary.get("schema_version") == 2 else working_tree_clean)
+    version = delivery_version(project_root, commit)
     valid = not errors
     delivery_ready = all(
-        [valid, accepted_status, working_tree_clean, commit_exists, commit_matches_head, production_entrypoint]
+        [valid, accepted_status, run_delivery_clean, commit_exists, production_entrypoint,
+         version["ok"], version["baseline_compatible"], version["delivery_tree_clean"]]
     )
     return {
         "path": str(path),
@@ -787,6 +797,9 @@ def validate_evidence_summary(project_root: Path, path: Path) -> dict[str, Any]:
         "status": status,
         "commit": commit,
         "working_tree_clean": working_tree_clean,
+        "run_delivery_tree_clean": run_delivery_clean,
+        "current_delivery_tree_clean": version["delivery_tree_clean"],
+        "version_check": version,
         "commit_exists": commit_exists,
         "commit_matches_head": commit_matches_head,
         "entrypoint": runtime.get("entrypoint"),
@@ -830,7 +843,7 @@ def is_governance_path(value: str) -> bool:
     path = value.strip().replace("\\", "/")
     if path.startswith("./"):
         path = path[2:]
-    return path in GOVERNANCE_PATHS or any(path.startswith(prefix) for prefix in GOVERNANCE_PATH_PREFIXES)
+    return is_record_path(path)
 
 
 def infer_accepted_baseline_from_history(project_root: Path) -> dict[str, Any] | None:
@@ -901,11 +914,13 @@ def build_delivery_baseline(project_root: Path, project: dict[str, Any] | None, 
     current_head = str(git["head_sha"])
     ancestor_code, _ = run_git(project_root, ["merge-base", "--is-ancestor", accepted_commit, current_head])
     head_relation = "same" if accepted_commit == current_head else ("descendant" if ancestor_code == 0 else "diverged")
-    committed = [] if accepted_commit == current_head else git_paths(
-        project_root,
-        ["diff", "--name-only", "--diff-filter=ACDMRTUXB", f"{accepted_commit}..{current_head}"],
-    )
-    working = list(base["working_tree_paths"])
+    version = delivery_version(project_root, accepted_commit)
+    if not version['ok'] and head_relation != 'diverged':
+        base.update({'state': 'git_unavailable', 'requires_user_review': True,
+                     'next_owner': 'environment_owner'})
+        return base
+    committed = version['committed_paths']
+    working = version['working_paths']
     changed = sorted(set(committed) | set(working))
     governance = [path for path in changed if is_governance_path(path)]
     delivery = [path for path in changed if not is_governance_path(path)]

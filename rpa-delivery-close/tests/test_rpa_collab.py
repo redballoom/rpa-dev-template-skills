@@ -205,7 +205,9 @@ class ProjectGateControllerTests(unittest.TestCase):
         subprocess.run(["git", "init"], cwd=self.project_root, check=True, capture_output=True)
         subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=self.project_root, check=True)
         subprocess.run(["git", "config", "user.name", "Test"], cwd=self.project_root, check=True)
-        subprocess.run(["git", "add", "AGENTS.md"], cwd=self.project_root, check=True)
+        # Initialization configuration is part of the committed delivery baseline.
+        (self.project_root / '.trellis/config.yaml').write_text('session_auto_commit: false\n', encoding='utf-8')
+        subprocess.run(["git", "add", "AGENTS.md", ".trellis/config.yaml"], cwd=self.project_root, check=True)
         subprocess.run(["git", "commit", "-m", "test evidence"], cwd=self.project_root, check=True, capture_output=True)
         return subprocess.run(
             ["git", "rev-parse", "HEAD"],
@@ -294,6 +296,51 @@ class ProjectGateControllerTests(unittest.TestCase):
         status = MODULE.build_status(self.project_root)
         self.assertEqual(status["evidence_summary"]["run_id"], "portable-001")
         self.assertTrue(status["evidence_summary"]["delivery_ready"])
+
+    def test_evidence_survives_record_commits_but_rejects_live_code_edits(self) -> None:
+        commit = self.init_git()
+        path = write_evidence_summary(self.project_root, commit)
+        self.commit_file('evidence/runs/portable-001.summary.json', path.read_text(encoding='utf-8'), 'save evidence')
+        self.commit_file('.trellis/workspace/reviewer/journal.md', 'accepted\n', 'save journal')
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertTrue(checked['delivery_ready'])
+        self.assertFalse(checked['commit_matches_head'])
+        runtime = self.project_root / 'core/中文文件.py'
+        runtime.parent.mkdir()
+        runtime.write_text('new code\n', encoding='utf-8')
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertTrue(checked['valid'])
+        self.assertFalse(checked['delivery_ready'])
+        self.assertIn('core/中文文件.py', checked['version_check']['delivery_paths'])
+
+    def test_evidence_rejects_changed_then_reverted_code_history(self) -> None:
+        commit = self.init_git()
+        path = write_evidence_summary(self.project_root, commit)
+        self.commit_file('AGENTS.md', 'changed\n', 'change instructions')
+        self.commit_file('AGENTS.md', '# Agents\n', 'restore instructions')
+        checked = MODULE.validate_evidence_summary(self.project_root, path)
+        self.assertFalse(checked['delivery_ready'])
+        self.assertIn('AGENTS.md', checked['version_check']['delivery_paths'])
+
+    def test_v2_delivery_clean_is_separate_from_raw_git_clean(self) -> None:
+        commit = self.init_git()
+        path = write_evidence_summary(self.project_root, commit, clean=False)
+        summary = json.loads(path.read_text(encoding='utf-8'))
+        self.assertFalse(MODULE.validate_evidence_summary(self.project_root, path)['delivery_ready'])
+        summary['schema_version'] = 2
+        summary['run']['delivery_tree_clean'] = True
+        unsigned = {k: v for k, v in summary.items() if k != 'integrity'}
+        summary['integrity']['sha256'] = MODULE.hashlib.sha256(MODULE.canonical_json_bytes(unsigned)).hexdigest()
+        path.write_text(json.dumps(summary), encoding='utf-8')
+        self.assertTrue(MODULE.validate_evidence_summary(self.project_root, path)['delivery_ready'])
+        del summary['run']['delivery_tree_clean']
+        path.write_text(json.dumps(summary), encoding='utf-8')
+        self.assertFalse(MODULE.validate_evidence_summary(self.project_root, path)['valid'])
+
+    def test_code_under_governance_directories_is_not_exempt(self) -> None:
+        for path in ['.trellis/scripts/task.py', '.trellis/config.yaml', '.agents/skills/test/SKILL.md',
+                     '.project-gates/plugin.py', 'evidence/runs/hook.py', '.gitignore']:
+            self.assertFalse(MODULE.is_governance_path(path), path)
 
     def test_portable_evidence_rejects_tamper_sensitive_field_and_failure(self) -> None:
         commit = self.init_git()

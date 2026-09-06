@@ -49,7 +49,7 @@ python <skill-dir>\scripts\rpa_collab.py `
   --summary evidence/runs/{run_id}.summary.json
 ```
 
-The Controller checks the closed schema, summary integrity SHA-256, exact Git commit, status, and `working_tree_clean`. A summary is `delivery_ready` only when it is a successful or accepted warning run from a clean commit at current `HEAD` through `run.bat`; it must not contain payloads, messages, traces, credentials, cookies, or full responses. `status` exposes the latest summary as `evidence_summary` and warns when it is invalid or stale.
+The Controller checks the closed schema, summary integrity SHA-256, exact run commit, status, and delivery code cleanliness. `valid` describes historical summary integrity; `delivery_ready` also checks current code. Schema 2 retains raw `working_tree_clean` and adds `delivery_tree_clean`; Schema 1 keeps its original stricter run-clean requirement. A successful or accepted warning run through `run.bat` remains eligible after record-only descendant commits. Current staged, unstaged, untracked delivery changes, divergent history, or any intervening code commit require validation again. Read `version_check` to identify the paths. See `references/evidence-version-policy.md` for the exact exemptions and compatibility policy. Summaries must not contain payloads, messages, traces, credentials, cookies, or full responses.
 
 ## Collaboration Bootstrap
 
