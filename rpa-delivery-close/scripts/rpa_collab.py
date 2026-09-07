@@ -38,6 +38,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("suggest", help="Recommend the next legal action")
 
+    recover = subparsers.add_parser("operation-recover", help="Resume only the pending local Gate operation")
+    recover.add_argument("--confirm-recovery", action="store_true")
+    recover.add_argument("--dry-run", action="store_true")
+
     evidence_check = subparsers.add_parser("evidence-check", help="Validate a portable sanitized run summary")
     evidence_check.add_argument("--summary", required=True, help="Path under evidence/runs ending in .summary.json")
 
@@ -105,6 +109,8 @@ def main(argv: list[str] | None = None) -> int:
             controller.print_json(result)
             if not result["valid"]:
                 return 3
+        elif args.command == "operation-recover":
+            controller.print_json(controller.recover_operation(args))
         elif args.command == "bootstrap":
             controller.print_json(controller.bootstrap_collaboration(args))
         elif args.command == "gate-close":
@@ -134,7 +140,7 @@ def main(argv: list[str] | None = None) -> int:
             controller.print_json(controller.migrate_project_gates(args))
         else:
             raise controller.CollabError(f"Unknown command: {args.command}")
-    except controller.CollabError as exc:
+    except (controller.CollabError, controller.transaction.TransactionError, OSError) as exc:
         controller.print_json({"ok": False, "error": str(exc)})
         return 2
     return 0

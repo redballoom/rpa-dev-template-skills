@@ -20,6 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from delivery_version import delivery_version, is_record_path
+import gate_transaction as transaction
 
 
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
@@ -95,10 +96,7 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
-    temp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    temp.replace(path)
+    transaction.atomic_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def has_full_trellis_workspace(project_root: Path) -> bool:
@@ -440,6 +438,7 @@ def check_delivery_route(project_root: Path, task_input: str | None = None) -> d
     }
 
 
+@transaction.guarded
 def set_delivery_route(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_delivery_route:
         raise CollabError("Refusing to write delivery_route without --confirm-delivery-route")
@@ -972,6 +971,11 @@ def legacy_gate_records(project_root: Path) -> list[str]:
 
 def build_status(project_root: Path, task_input: str | None = None) -> dict[str, Any]:
     project_root = project_root.resolve()
+    pending = transaction.inspect(project_root)
+    if pending:
+        return {"ok": False, "project_root": str(project_root), "project_gate": None,
+                "pending_operation": pending, "warnings": [{"code": "pending_operation",
+                "message": "Gate records may be partially written; inspect and recover before relying on them"}]}
     project = read_project_gate(project_root, required=False)
     selected: dict[str, Any] | None = None
     selected_path: Path | None = None
@@ -1071,6 +1075,10 @@ def build_status(project_root: Path, task_input: str | None = None) -> dict[str,
 
 def suggest_action(status: dict[str, Any]) -> dict[str, Any]:
     codes = {item["code"] for item in status.get("warnings", [])}
+    if "pending_operation" in codes:
+        return {"ok": False, "recommended_action": "operation_recover",
+                "reason": "Inspect pending operation, then explicitly recover; do not repeat the Gate event",
+                "current_gate": None}
     if "legacy_project_gate_directory" in codes and status.get("project_gate"):
         action, reason = "resolve_project_gate_conflict", "Both current and legacy Gate records exist; compare them before removing the legacy files."
     elif "legacy_project_gate_directory" in codes:
@@ -1144,7 +1152,7 @@ def event_id(event_type: str, gate: str, timestamp: str, args: argparse.Namespac
 
 
 def history_has_event(history: str, stable_id: str) -> bool:
-    return f"- event_id: {stable_id}" in history
+    return f"- event_id: {stable_id}" in history.splitlines()
 
 
 def history_has_gate_close(project_root: Path, gate: str) -> bool:
@@ -1193,11 +1201,12 @@ def append_gate_event(
     previous_baseline: dict[str, Any] | None = None,
     accepted_baseline: dict[str, Any] | None = None,
     dry_run: bool = False,
+    writes: dict[Path, str] | None = None,
 ) -> dict[str, Any]:
     _, history_path = project_gate_paths(project_root)
     existing = history_path.read_text(encoding="utf-8") if history_path.exists() else "# Project Gate History\n\n"
     if history_has_event(existing, stable_id):
-        return {"appended": False, "duplicate": True, "event_id": stable_id, "history_path": str(history_path)}
+        raise CollabError(f"Gate event_id already exists: {stable_id}")
     lines = [f"## {one_line(timestamp)} - {gate} {event_type}", "", f"- event: {event_type}", f"- event_id: {stable_id}", f"- gate: {gate}", "- result: accepted", f"- accepted_by: {one_line(accepted_by)}"]
     if reason:
         lines.append(f"- reason: {one_line(reason)}")
@@ -1213,11 +1222,39 @@ def append_gate_event(
         lines.append(f"- accepted_commit: {one_line(accepted_baseline['commit'])}")
     lines.extend(["", ""])
     if not dry_run:
-        history_path.parent.mkdir(parents=True, exist_ok=True)
-        history_path.write_text(existing.rstrip() + "\n\n" + "\n".join(lines), encoding="utf-8")
+        rendered = existing.rstrip() + "\n\n" + "\n".join(lines)
+        if writes is not None:
+            writes[history_path] = rendered
+        else:
+            transaction.atomic_text(history_path, rendered)
     return {"appended": True, "duplicate": False, "event_id": stable_id, "history_path": str(history_path), "dry_run": dry_run}
 
 
+def commit_gate_update(project_root, writes, project_path, project, task_file,
+                       task_data, route_preflight, stable_id):
+    writes[project_path] = json.dumps(project, ensure_ascii=False, indent=2) + "\n"
+    if route_preflight["status"] == "would_update":
+        meta = task_data["meta"]
+        route = {**meta["delivery_route"], "completed_reviews": route_preflight["completed_reviews"]}
+        updated = {**task_data, "meta": {**meta, "delivery_route": route}}
+        writes[task_file] = json.dumps(updated, ensure_ascii=False, indent=2) + "\n"
+    transaction.prepare(project_root, stable_id, writes)
+    try:
+        transaction.apply_pending(project_root, write_json_atomic)
+    except (transaction.TransactionError, CollabError, OSError) as exc:
+        return {**route_preflight, "status": "failed", "dry_run": False, "error": str(exc)}
+    return {**route_preflight, "dry_run": False,
+            "status": "updated" if route_preflight["status"] == "would_update" else route_preflight["status"]}
+
+
+def recover_operation(args):
+    if not args.dry_run and not args.confirm_recovery:
+        raise CollabError("operation-recover requires --confirm-recovery after inspecting the pending operation")
+    with transaction.project_lock(args.project_root):
+        return transaction.apply_pending(args.project_root, write_json_atomic, dry_run=args.dry_run)
+
+
+@transaction.guarded
 def bootstrap_collaboration(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
     project_root.mkdir(parents=True, exist_ok=True)
@@ -1246,6 +1283,7 @@ def bootstrap_collaboration(args: argparse.Namespace) -> dict[str, Any]:
     return {"ok": True, "created_task": created_task, "task_file": str(task_file), "task_id": task_id(task_file, task_data), "trellis_workspace": "full" if has_full_trellis_workspace(project_root) else "minimal", "trellis_init": trellis_result, "trellis_config": safe_config, "project_gate": project_gate, "status": build_status(project_root, str(task_file.parent)) if not args.dry_run else None}
 
 
+@transaction.guarded
 def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate close requires --confirm-user-acceptance after the user explicitly accepts the result")
@@ -1280,6 +1318,7 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
         timestamp=timestamp,
         baseline_commit=getattr(args, "baseline_commit", None),
     )
+    writes: dict[Path, str] = {}
     event = append_gate_event(
         project_root,
         event_type="gate-close",
@@ -1293,6 +1332,7 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
         previous_baseline=previous_baseline,
         accepted_baseline=accepted_baseline,
         dry_run=args.dry_run,
+        writes=writes,
     )
     project["current_gate"] = result_gate
     if args.accepted_gate == "G5":
@@ -1300,29 +1340,17 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if accepted_baseline:
         project["accepted_baseline"] = accepted_baseline
     project["updated_at"] = timestamp
+    route_sync = route_preflight
     if not args.dry_run:
-        write_json_atomic(project_path, project)
-    if args.dry_run:
-        route_sync = route_preflight
-    else:
-        try:
-            route_sync = sync_delivery_route_review(
-                project_root,
-                task_file,
-                task_data,
-                args.accepted_gate,
-                project,
-            )
-        except (CollabError, OSError) as exc:
-            route_sync = {
-                "status": "failed",
-                "review": args.accepted_gate,
-                "task_file": str(task_file) if task_file else None,
-                "task_id": task_id(task_file, task_data) if task_file else None,
-                "error": str(exc),
-                "dry_run": False,
-            }
+        route_sync = commit_gate_update(
+            project_root, writes, project_path, project, task_file, task_data,
+            route_preflight, stable_id,
+        )
     synchronized = route_sync["status"] != "failed"
+    if not synchronized:
+        event["appended"] = history_has_event(
+            transaction.text_at(project_gate_paths(project_root)[1]) or "", stable_id
+        )
     result = {
         "ok": synchronized,
         "event": event,
@@ -1334,12 +1362,12 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not synchronized:
         result["partial_commit"] = True
         result["error"] = (
-            "Project Gate close was committed, but Task delivery_route synchronization failed. "
-            "Do not repeat gate-close; repair the Task route and read back both authorities."
+            "Gate operation is incomplete. Inspect status and run operation-recover; do not repeat the Gate event."
         )
     return result
 
 
+@transaction.guarded
 def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate revalidation requires --confirm-user-acceptance")
@@ -1369,6 +1397,7 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
         timestamp=timestamp,
         baseline_commit=getattr(args, "baseline_commit", None),
     )
+    writes: dict[Path, str] = {}
     event = append_gate_event(
         project_root,
         event_type="gate-revalidation",
@@ -1382,33 +1411,22 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
         previous_baseline=previous_baseline,
         accepted_baseline=accepted_baseline,
         dry_run=args.dry_run,
+        writes=writes,
     )
     if accepted_baseline:
         project["accepted_baseline"] = accepted_baseline
     project["updated_at"] = timestamp
+    route_sync = route_preflight
     if not args.dry_run:
-        write_json_atomic(project_path, project)
-    if args.dry_run:
-        route_sync = route_preflight
-    else:
-        try:
-            route_sync = sync_delivery_route_review(
-                project_root,
-                task_file,
-                task_data,
-                args.gate,
-                project,
-            )
-        except (CollabError, OSError) as exc:
-            route_sync = {
-                "status": "failed",
-                "review": args.gate,
-                "task_file": str(task_file) if task_file else None,
-                "task_id": task_id(task_file, task_data) if task_file else None,
-                "error": str(exc),
-                "dry_run": False,
-            }
+        route_sync = commit_gate_update(
+            project_root, writes, project_path, project, task_file, task_data,
+            route_preflight, stable_id,
+        )
     synchronized = route_sync["status"] != "failed"
+    if not synchronized:
+        event["appended"] = history_has_event(
+            transaction.text_at(project_gate_paths(project_root)[1]) or "", stable_id
+        )
     result = {
         "ok": synchronized,
         "event": event,
@@ -1421,12 +1439,12 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not synchronized:
         result["partial_commit"] = True
         result["error"] = (
-            "Project Gate revalidation event was committed, but Task delivery_route synchronization failed. "
-            "Do not repeat gate-revalidate; repair the Task route and read back both authorities."
+            "Gate operation is incomplete. Inspect status and run operation-recover; do not repeat the Gate event."
         )
     return result
 
 
+@transaction.guarded
 def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate amendment requires --confirm-user-acceptance")
@@ -1467,6 +1485,7 @@ def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
         baseline_commit=getattr(args, "baseline_commit", None),
         required=True,
     )
+    writes: dict[Path, str] = {}
     event = append_gate_event(
         project_root,
         event_type="gate-amendment",
@@ -1480,34 +1499,23 @@ def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
         previous_baseline=previous_baseline,
         accepted_baseline=accepted_baseline,
         dry_run=args.dry_run,
+        writes=writes,
     )
     if event["duplicate"]:
         raise CollabError(f"Gate amendment event_id already exists: {stable_id}")
     project["accepted_baseline"] = accepted_baseline
     project["updated_at"] = timestamp
+    route_sync = route_preflight
     if not args.dry_run:
-        write_json_atomic(project_path, project)
-    if args.dry_run:
-        route_sync = route_preflight
-    else:
-        try:
-            route_sync = sync_delivery_route_review(
-                project_root,
-                task_file,
-                task_data,
-                args.gate,
-                project,
-            )
-        except (CollabError, OSError) as exc:
-            route_sync = {
-                "status": "failed",
-                "review": args.gate,
-                "task_file": str(task_file) if task_file else None,
-                "task_id": task_id(task_file, task_data) if task_file else None,
-                "error": str(exc),
-                "dry_run": False,
-            }
+        route_sync = commit_gate_update(
+            project_root, writes, project_path, project, task_file, task_data,
+            route_preflight, stable_id,
+        )
     synchronized = route_sync["status"] != "failed"
+    if not synchronized:
+        event["appended"] = history_has_event(
+            transaction.text_at(project_gate_paths(project_root)[1]) or "", stable_id
+        )
     result = {
         "ok": synchronized,
         "event": event,
@@ -1522,12 +1530,12 @@ def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not synchronized:
         result["partial_commit"] = True
         result["error"] = (
-            "Project Gate amendment was committed, but Task delivery_route synchronization failed. "
-            "Do not repeat gate-amendment; repair the Task route and read back both authorities."
+            "Gate operation is incomplete. Inspect status and run operation-recover; do not repeat the Gate event."
         )
     return result
 
 
+@transaction.guarded
 def archive_check(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
     task_file, task = match_task(project_root, args.task)
@@ -1662,6 +1670,7 @@ def migration_preview(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+@transaction.guarded
 def migrate_project_gates(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_migration:
         raise CollabError("Project Gate directory migration requires --confirm-migration")

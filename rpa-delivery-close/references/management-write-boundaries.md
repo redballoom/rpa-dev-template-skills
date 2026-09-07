@@ -15,7 +15,7 @@ Project Gate and Trellis writes are valuable audit records, but generated file m
 5. Read back the archived Task, Gate state, journal, Git status, and exact changed paths.
 6. If the user authorized recording governance changes in Git, stage only the reviewed governance paths and create one focused commit such as `chore(governance): record accepted delivery`.
 
-Do not create a commit after each Gate, archive, and journal command. If a partial Gate/route write occurs, preserve the committed authority, repair only the failed side, and postpone the governance commit until read-back is consistent.
+Do not create a commit after each Gate, archive, and journal command. If a partial Gate/route write occurs, preserve the pending-operation journal and inspect `operation-recover --dry-run`. After recovery authorization, use `operation-recover --confirm-recovery` to complete only that recorded operation. Do not bypass it with manual route updates or a repeated Gate event. Conflicts require reconciliation; postpone the governance commit until read-back is consistent and the pending journal is gone. The journal may contain full Task metadata and is not publishable evidence.
 
 ## PR diff partition
 

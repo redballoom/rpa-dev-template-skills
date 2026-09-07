@@ -127,12 +127,40 @@ The route synchronization reuses the existing Task-owned field; it never writes
 - `already_completed`: the Task route already contained the review;
 - `not_configured`: the optional route is absent, so the legacy Task remains compatible;
 - `not_required` or `not_applicable`: this Gate is outside the configured Task route;
-- `failed`: the Project Gate event and snapshot were committed, but the Task route write failed.
+- `failed`: a local write or read-back failed; any subset of history, snapshot and Task may be written. Do not assume the project advanced.
 
-When `ok=false` and `partial_commit=true`, report the two facts separately. Do not
-repeat `gate-close`, because the Project Gate has already advanced. Repair only the
-existing Task route through `delivery-route-set`, preserving every configured route
-field and adding the accepted review, then read back both authorities.
+### Interrupted operation recovery
+
+Gate close, amendment and revalidation save `.project-gates/pending-operation.json`
+before changing the history, project snapshot or existing Task route. This is a
+temporary recovery journal, not a second Gate or Task authority. It is removed
+only after all planned files match their read-back. Preserve it while pending;
+it can contain full local Task metadata and must not be published as evidence.
+
+When `ok=false` and `partial_commit=true`, inspect `status`. A pending operation
+blocks further Gate writes, route changes and archive checks. Do not repeat the
+Gate command or manually patch the route around the journal. Inspect recovery:
+
+```powershell
+python <skill-dir>\scripts\rpa_collab.py --project-root <root> operation-recover --dry-run
+python <skill-dir>\scripts\rpa_collab.py --project-root <root> operation-recover --confirm-recovery
+```
+
+Run the second command only after authorization to finish that recorded operation.
+It fills only missing writes, preserves the original event ID, and performs no
+new Gate acceptance, Git commit, Task archive or external action. Repeating recovery
+after completion is a no-op. A file that matches neither its recorded before nor
+after image is a conflict: preserve all files and request reconciliation instead
+of overwriting. Corrupt journals also stop recovery. Never delete a journal just
+to unblock delivery.
+
+The local OS lock excludes cooperating Controller writers and releases on process
+exit; unrelated editors and Trellis do not acquire it, so avoid concurrent manual
+edits during writes. This provides recoverable ordered writes, not a multi-file
+filesystem transaction or a guarantee against device loss. Old interrupted
+operations without a journal require evidence-based manual reconciliation; do not
+invent their intended state. Bootstrap, migration, Task creation/archive and remote
+services are outside this recovery transaction.
 
 Use this completion report after a successful close:
 
@@ -162,7 +190,7 @@ python <skill-dir>\scripts\rpa_collab.py `
 
 Before running it, show the previous accepted baseline, the changed contract, evidence, downstream impact, and current Gate. The command requires a non-empty reason, an existing initial close for that Gate, an exact Git commit, and explicit user acceptance. It is available only while the project is still in its first G0-G5 delivery. After G5, use `gate-revalidate` instead.
 
-For G2, Task route synchronization reuses the existing review. `already_completed` is valid when the original G2 close already updated the route; `updated` repairs a route that was added or recovered later. A partial synchronization failure must be repaired without repeating the amendment event.
+For G2, Task route synchronization reuses the existing review. `already_completed` is valid when the original G2 close already updated the route; `updated` repairs a route that was added or recovered later. Use pending-operation recovery after a partial failure, without repeating the amendment event.
 
 ## G5 Revalidation
 
@@ -183,7 +211,7 @@ Revalidation is available only after the initial G5 close and never changes `cur
 When the active Task has a route containing the revalidated review,
 `gate-revalidate` records it in `completed_reviews` and returns the same
 `delivery_route_sync` result. A partial synchronization failure means the
-revalidation event exists; repair the Task route without repeating the event.
+operation may be partially written; use pending-operation recovery without repeating the event.
 
 ## Trellis Task Facts
 

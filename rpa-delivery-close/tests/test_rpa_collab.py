@@ -753,7 +753,8 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertEqual(result["delivery_route_sync"]["status"], "failed")
         self.assertEqual(result["read_back"]["current_gate"], "G3")
         self.assertEqual(task["meta"]["delivery_route"]["completed_reviews"], [])
-        self.assertIn("Do not repeat gate-close", result["error"])
+        self.assertIn("operation-recover", result["error"])
+        self.assertIsNotNone(MODULE.transaction.inspect(self.project_root))
 
     def test_gate_close_rejects_second_close_of_same_gate(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
