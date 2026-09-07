@@ -57,9 +57,7 @@ Read these project files:
      backfill a legacy route without user confirmation.
 4. Draft the contract before coding.
 5. Wait for user confirmation before handler implementation.
-6. Implement handler only after the contract is clear.
-7. Add tests and examples.
-8. Run `python -m pytest tests/ -v` when possible.
+6. Complete Progress Handoff below, then return to the active Trellis execution flow for implementation, examples and applicable tests. Keep one Task and one implementation plan; do not start a second implementation workflow inside this skill.
 
 ## Contract Draft Format
 
@@ -135,17 +133,16 @@ Include:
 - The three confirmed delivery requirements, working branch, and decision reason.
 - The confirmed Issue-scoped delivery route, or that the legacy Task has no route and remains compatible.
 
-Do not start implementation on your own. Wait for an explicit user confirmation such as "契约确认，开始实现".
+Before implementation, require explicit contract and implementation authorization, such as "契约确认，开始实现". If the existing confirmation package already covers the current contract, route and implementation scope, reuse it rather than asking again. Ask only for missing decisions or material changes.
 
 ## Progress Handoff
 
 After explicit contract confirmation, hand off to `rpa-delivery-close` before implementation:
 
 1. Run `status` / `suggest` against the local Trellis delivery task.
-2. After the route is explicitly confirmed, use `delivery-route-set` from
+2. Use the route authorization already included in the confirmed contract package; ask only if the route was omitted, is ambiguous or changed. Then use `delivery-route-set` from
    `rpa-delivery-close`; do not use Trellis `set-meta` for the structured object.
-3. For an initial project currently at G2, present the contract evidence and
-   record the accepted G2 Gate through `gate-close` after the user confirms it;
+3. For an initial project currently at G2, check that the package explicitly accepted the G2 evidence and record it through `gate-close`; ask only if that acceptance is missing or no longer applicable;
    verify the Project Gate read-back at G3 before implementation.
 4. For an operational G5 project, keep the Project Gate at G5 and proceed only
    after the confirmed delivery route is written and read back. Do not rewind it

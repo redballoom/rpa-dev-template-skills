@@ -79,6 +79,12 @@ The project snapshot contract is published in `references/project-gate.schema.js
 
 Use `--init-trellis` only when an interactive Trellis CLI can run in the current environment. Use `--allow-minimal` only for an explicitly degraded test or recovery case.
 
+## Confirmation packages
+
+Use the project's `.trellis/spec/guides/collaboration-entry.md` for the three-package flow when installed. Before asking, check whether an explicit user confirmation already covers this Task, scope, evidence/version and named action. Reuse that confirmation when these remain applicable; do not ask once per command or once per Gate. Preserve the confirmation source in existing Task/evidence records, without adding a second approval store.
+
+An acceptance package may name several Gate events and archive as distinct actions. Check, write and read back each event separately. Accepting business results alone does not authorize archive, merge, release or Issue close. Missing or ambiguous authorization, changed scope/contract/delivery code, or an unrecoverable confirmation source requires a focused question before dependent writes. Evidence and interrupted-operation guards still apply; a confirmation flag is not evidence of user consent.
+
 ## Gate Close
 
 <!-- Correction: 2026-08-28 | was: Gate close ended after the project write | reason: an existing Task delivery route could remain stale -->
@@ -98,8 +104,8 @@ Before closing a Gate:
 
 1. Read Project Gate Controller and the relevant Trellis Task.
 2. Report the completed result, evidence, remaining risk, and proposed next Gate.
-3. Ask exactly: `当前 Gate 是否验收通过，并记录到 Project Gate Controller？`
-4. Only after explicit acceptance, run `gate-close` with `--confirm-user-acceptance`.
+3. Check the existing confirmation package first. If it does not explicitly cover this Gate and its evidence, ask: `当前 Gate 是否验收通过，并记录到 Project Gate Controller？`
+4. With applicable explicit acceptance, including acceptance already given in the package, run `gate-close` with `--confirm-user-acceptance`. Do not request the same acceptance again.
 5. Run `gate-close`; when the Task already has a route containing the accepted G2-G5 review, the command also records that review under `meta.delivery_route.completed_reviews`.
 6. Read `ok`, `read_back`, and `delivery_route_sync` from the command result before reporting completion.
 
@@ -295,7 +301,7 @@ fabricate missing commit/runner linkage. Old raw runner success remains diagnost
 not current-delivery clearance. New checks require a portable summary and the
 Task's corresponding original input file, verified against the summary input hash.
 
-After user archive authorization, use:
+After explicit archive authorization, either named in the accepted delivery package or obtained separately when missing, use:
 
 ```powershell
 python <skill-dir>/scripts/rpa_collab.py --project-root <root> --task <task> delivery-archive --confirm-archive
