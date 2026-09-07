@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Any
 from delivery_version import delivery_version, is_record_path
 import gate_transaction as transaction
+import delivery_guard
 
 
 GATES = ("G0", "G1", "G2", "G3", "G4", "G5")
@@ -1288,6 +1289,7 @@ def close_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate close requires --confirm-user-acceptance after the user explicitly accepts the result")
     project_root = Path(args.project_root).resolve()
+    enforce_delivery_check(args, args.accepted_gate)
     project_path, _ = project_gate_paths(project_root)
     project = read_project_gate(project_root)
     if project["current_gate"] != args.accepted_gate:
@@ -1372,6 +1374,7 @@ def revalidate_gate(args: argparse.Namespace) -> dict[str, Any]:
     if not args.confirm_user_acceptance:
         raise CollabError("Gate revalidation requires --confirm-user-acceptance")
     project_root = Path(args.project_root).resolve()
+    enforce_delivery_check(args, args.gate)
     project_path, _ = project_gate_paths(project_root)
     project = read_project_gate(project_root)
     if project["current_gate"] != "G5" or project["status"] != "operational":
@@ -1535,8 +1538,64 @@ def amend_gate(args: argparse.Namespace) -> dict[str, Any]:
     return result
 
 
+def delivery_check(args: argparse.Namespace) -> dict[str, Any]:
+    # Pass the current module functions without importing a second Controller instance.
+    from types import SimpleNamespace
+    api = SimpleNamespace(**globals())
+    return delivery_guard.check(api, Path(args.project_root), args.task,
+                                getattr(args, "stage", "archive"),
+                                user_accepted=getattr(args, "user_accepted", False))
+
+
+def enforce_delivery_check(args: argparse.Namespace, stage: str) -> None:
+    if stage not in {"G3", "G4", "G5"}:
+        return
+    check_args = argparse.Namespace(project_root=args.project_root, task=args.task,
+                                    stage=stage, user_accepted=args.confirm_user_acceptance)
+    result = delivery_check(check_args)
+    if not result["ready"]:
+        raise CollabError("Delivery preflight blocked: " + "; ".join(result["missing"]))
+    if getattr(args, "baseline_commit", None):
+        commit = resolve_git_commit(Path(args.project_root), args.baseline_commit, required=True)
+        _, task = match_task(Path(args.project_root), args.task)
+        declared = (task.get("meta", {}).get("archive_evidence") or {}).get("commit") or task.get("commit")
+        if commit != declared:
+            raise CollabError("Explicit accepted baseline differs from the checked delivery commit")
+
+
 @transaction.guarded
 def archive_check(args: argparse.Namespace) -> dict[str, Any]:
+    return delivery_check(argparse.Namespace(project_root=args.project_root, task=args.task,
+                          stage="archive", user_accepted=getattr(args, "user_accepted", False)))
+
+
+@transaction.guarded
+def delivery_archive(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.confirm_archive:
+        raise CollabError("delivery-archive requires separate --confirm-archive authorization")
+    root = Path(args.project_root).resolve()
+    checked = delivery_check(argparse.Namespace(project_root=str(root), task=args.task,
+                             stage="archive", user_accepted=getattr(args, "user_accepted", False)))
+    if not checked["ready"]:
+        return checked
+    task_file, task = match_task(root, args.task)
+    script = root / ".trellis/scripts/task.py"
+    if not script.is_file():
+        raise CollabError("Trellis archive script is missing")
+    proc = subprocess.run([sys.executable, str(script), "archive", task_file.parent.name, "--no-commit"],
+                          cwd=root, capture_output=True, text=True, encoding="utf-8", timeout=60)
+    if proc.returncode:
+        raise CollabError("Trellis archive failed; inspect Task files before retrying; no Gate/Issue/PR action performed")
+    archived = [p for p in find_task_files(root) if is_archive_path(p, root / ".trellis/tasks")
+                and task_id(p, read_json(p)) == task_id(task_file, task)]
+    if task_file.exists() or len(archived) != 1 or read_json(archived[0]).get("status") != "completed":
+        raise CollabError("Trellis archive read-back is inconsistent; inspect before retrying")
+    return {"ok": True, "archived_task": str(archived[0]), "preflight": checked,
+            "gate_changed": False, "git_commit_performed": False}
+
+
+def historical_archive_check(args: argparse.Namespace) -> dict[str, Any]:
+    """Legacy metadata inspection only; never a delivery authorization."""
     project_root = Path(args.project_root).resolve()
     task_file, task = match_task(project_root, args.task)
     meta = task.get("meta") if isinstance(task.get("meta"), dict) else {}
@@ -1634,7 +1693,9 @@ def archive_check(args: argparse.Namespace) -> dict[str, Any]:
         except CollabError:
             missing.append(f"evidence:{ref}")
     missing = sorted(set(missing))
-    return {"ok": not missing, "ready": not missing, "task_file": str(task_file), "task_id": task_id(task_file, task), "missing": missing, "requirements": requirements, "archive_evidence": archive}
+    return {"ok": True, "ready": False, "legacy_metadata_complete": not missing,
+            "historical_only": True, "task_file": str(task_file), "task_id": task_id(task_file, task),
+            "missing": missing, "requirements": requirements, "archive_evidence": archive}
 
 
 def migration_preview(args: argparse.Namespace) -> dict[str, Any]:

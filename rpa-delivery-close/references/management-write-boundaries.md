@@ -11,7 +11,7 @@ Project Gate and Trellis writes are valuable audit records, but generated file m
 1. Finish and commit the business implementation at a stable tested commit when the user authorized a commit.
 2. Run Project Gate Controller `status` and the applicable evidence/route/archive checks.
 3. After explicit acceptance, write the Gate close/amendment/revalidation and read back both Project Gate and Task route state.
-4. Archive the Task with Trellis `--no-commit`, then write the final workspace journal entry when required.
+4. With separate archive authorization, run `delivery-archive --confirm-archive` (and explicit current-delivery user acceptance where required). It repeats the delivery preflight, invokes Trellis `--no-commit`, and reads back the archive. Then write the final workspace journal entry when required. Direct native Trellis archive is not guarded by this controller.
 5. Read back the archived Task, Gate state, journal, Git status, and exact changed paths.
 6. If the user authorized recording governance changes in Git, stage only the reviewed governance paths and create one focused commit such as `chore(governance): record accepted delivery`.
 

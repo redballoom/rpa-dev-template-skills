@@ -69,6 +69,17 @@ def build_parser() -> argparse.ArgumentParser:
     archive = subparsers.add_parser("archive-check", help="Check evidence before calling Trellis archive")
     archive.add_argument("--user-accepted", action="store_true")
 
+    delivery = subparsers.add_parser("delivery-check", help="Read GitHub and local evidence for the selected delivery")
+    delivery.add_argument("--stage", choices=("G3", "G4", "G5", "archive"), default="archive")
+    delivery.add_argument("--user-accepted", action="store_true")
+
+    history = subparsers.add_parser("historical-check", help="Inspect old metadata without granting current delivery readiness")
+    history.add_argument("--user-accepted", action="store_true")
+
+    guarded_archive = subparsers.add_parser("delivery-archive", help="Recheck evidence, then archive exactly one Task without committing")
+    guarded_archive.add_argument("--confirm-archive", action="store_true")
+    guarded_archive.add_argument("--user-accepted", action="store_true")
+
     subparsers.add_parser("delivery-route-check", help="Validate the optional Issue-scoped Task delivery route")
 
     route = subparsers.add_parser("delivery-route-set", help="Write one confirmed Issue-scoped delivery route to a Trellis Task")
@@ -129,7 +140,22 @@ def main(argv: list[str] | None = None) -> int:
             if not result.get("ok", True):
                 return 3
         elif args.command == "archive-check":
-            controller.print_json(controller.archive_check(args))
+            result = controller.archive_check(args)
+            controller.print_json(result)
+            if not result["ready"]:
+                return 3
+        elif args.command == "delivery-check":
+            result = controller.delivery_check(args)
+            controller.print_json(result)
+            if not result["ready"]:
+                return 3
+        elif args.command == "historical-check":
+            controller.print_json(controller.historical_archive_check(args))
+        elif args.command == "delivery-archive":
+            result = controller.delivery_archive(args)
+            controller.print_json(result)
+            if not result["ok"]:
+                return 3
         elif args.command == "delivery-route-check":
             controller.print_json(controller.check_delivery_route(project_root, args.task))
         elif args.command == "delivery-route-set":
@@ -140,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
             controller.print_json(controller.migrate_project_gates(args))
         else:
             raise controller.CollabError(f"Unknown command: {args.command}")
-    except (controller.CollabError, controller.transaction.TransactionError, OSError) as exc:
+    except (controller.CollabError, controller.transaction.TransactionError, OSError, controller.subprocess.TimeoutExpired) as exc:
         controller.print_json({"ok": False, "error": str(exc)})
         return 2
     return 0

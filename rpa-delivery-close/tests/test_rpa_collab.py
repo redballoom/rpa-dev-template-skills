@@ -193,6 +193,11 @@ def write_evidence_summary(
 
 class ProjectGateControllerTests(unittest.TestCase):
     def setUp(self) -> None:
+        # These tests cover legacy controller mechanics; admission is tested separately
+        # with real Git fixtures and provider responses in test_delivery_guard.py.
+        admission = mock.patch.object(MODULE, "enforce_delivery_check")
+        admission.start()
+        self.addCleanup(admission.stop)
         self.temp_dir = tempfile.TemporaryDirectory()
         self.project_root = Path(self.temp_dir.name)
         write_workspace(self.project_root)
@@ -973,7 +978,7 @@ class ProjectGateControllerTests(unittest.TestCase):
     def test_archive_guard_rejects_missing_contract_and_evidence(self) -> None:
         MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
+        result = MODULE.historical_archive_check(args)
         self.assertFalse(result["ready"])
         self.assertEqual(
             set(result["missing"]),
@@ -998,7 +1003,7 @@ class ProjectGateControllerTests(unittest.TestCase):
             },
         )
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
+        result = MODULE.historical_archive_check(args)
         self.assertIn("delivery_requirements.require_runner", result["missing"])
         self.assertIn("delivery_requirements.require_user_acceptance", result["missing"])
 
@@ -1026,8 +1031,9 @@ class ProjectGateControllerTests(unittest.TestCase):
             },
         )
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
-        self.assertTrue(result["ready"])
+        result = MODULE.historical_archive_check(args)
+        self.assertTrue(result["legacy_metadata_complete"])
+        self.assertFalse(result["ready"])
         self.assertNotIn("pr_url", result["missing"])
 
     def test_archive_guard_requires_pr_url_when_pr_is_required(self) -> None:
@@ -1054,7 +1060,7 @@ class ProjectGateControllerTests(unittest.TestCase):
             },
         )
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
+        result = MODULE.historical_archive_check(args)
         self.assertFalse(result["ready"])
         self.assertEqual(result["missing"], ["pr_url"])
 
@@ -1082,7 +1088,7 @@ class ProjectGateControllerTests(unittest.TestCase):
             },
         )
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
+        result = MODULE.historical_archive_check(args)
         self.assertEqual(set(result["missing"]), {"runner_evidence", "user_acceptance"})
 
     def test_archive_guard_passes_configured_requirements(self) -> None:
@@ -1121,14 +1127,15 @@ class ProjectGateControllerTests(unittest.TestCase):
         )
         (self.project_root / "runner_delivery.json").write_text('{"status":"success"}', encoding="utf-8")
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=True)
-        result = MODULE.archive_check(args)
-        self.assertTrue(result["ready"])
+        result = MODULE.historical_archive_check(args)
+        self.assertTrue(result["legacy_metadata_complete"])
+        self.assertFalse(result["ready"])
         self.assertEqual(result["missing"], [])
 
     def test_archive_guard_rejects_already_completed_task(self) -> None:
         write_task(self.project_root, status="completed")
         args = argparse.Namespace(project_root=str(self.project_root), task="demo-delivery", user_accepted=False)
-        result = MODULE.archive_check(args)
+        result = MODULE.historical_archive_check(args)
         self.assertIn("task_already_archived", result["missing"])
 
     def test_migration_preview_never_writes_project_gate(self) -> None:

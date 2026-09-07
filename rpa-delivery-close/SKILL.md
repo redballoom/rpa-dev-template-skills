@@ -12,7 +12,7 @@ Project Gate Controller .project-gates/        = project G0-G5 and accepted Gate
 Trellis .trellis/      = engineering Task, plan, notes, checks, and archive
 Git / PR               = code version and technical acceptance
 runner / ShadowBot     = target-environment execution evidence
-Gitea Issue            = requirement and discussion entry
+GitHub Issue/comments = requirement, scope changes and source-linked statements
 Base                   = optional read-only management projection
 ```
 
@@ -272,82 +272,50 @@ never changes Project Gate Controller. `project_revalidations` records intended
 reviews only; each actual `gate-revalidate` still requires separate user
 acceptance and evidence.
 
-## Archive Evidence Guard
+## Current Delivery And Archive Guard
 
-Trellis `archive` is a technical operation and does not prove delivery readiness. Before calling it, run:
+Read [references/delivery-evidence-contract.md](references/delivery-evidence-contract.md)
+when preparing G3/G4/G5 acceptance, recording review/check evidence, or archiving.
+Agree the evidence sources and scope during contract confirmation; missing new fields
+do not revoke old acceptance, but cannot grant new delivery clearance.
+
+Use `delivery-check --stage G3|G4|G5|archive` to read the selected Task, local Git,
+GitHub Issue/PR/reviews/checks and source-linked evidence. `archive-check` now uses
+the same strict archive stage. Failed checks return exit 3; errors do not become a pass.
+G3-G5 close and revalidation invoke this check before writing any Gate event.
+
+Keep recorded review, local tests, GitHub conversation comments, formal Review and
+GitHub check-runs distinct. An account or a local record is not authenticated human
+authorship. A test source file or Trellis `check.jsonl` is not a passing test report.
+Do not construct a passing record from an unexecuted check or an unperformed review.
+
+For historical projects use `historical-check`: it always returns `ready=false`
+and cannot authorize archive or Gate changes. Do not rewrite old acceptance or
+fabricate missing commit/runner linkage. Old raw runner success remains diagnostic,
+not current-delivery clearance. New checks require a portable summary and the
+Task's corresponding original input file, verified against the summary input hash.
+
+After user archive authorization, use:
 
 ```powershell
-python <skill-dir>\scripts\rpa_collab.py `
-  --project-root <project-root> `
-  --task <task-id> `
-  archive-check `
-  --user-accepted
+python <skill-dir>/scripts/rpa_collab.py --project-root <root> --task <task> delivery-archive --confirm-archive
 ```
 
-The Task should provide:
+This repeats preflight, invokes only Trellis `archive <task> --no-commit`, and reads
+back the archived Task. It does not merge a PR, close an Issue, advance a Gate or
+commit Git. A failed or interrupted Trellis archive needs inspection, not blind retry.
+The underlying Trellis command can still be called directly; it is not itself
+protected by this Controller. Never present that bypass as formal delivery clearance.
 
-- valid Project Gate Controller project state and explicit `session_auto_commit: false`;
-- all three boolean fields under `meta.delivery_requirements`;
-- `meta.archive_evidence.acceptance_criteria` entries with accepted result and evidence references;
-- `meta.archive_evidence.technical_checks` entries with passed result and evidence references;
-- a Git commit that exists locally;
-- `pr_url` when `meta.delivery_requirements.require_pr=true`;
-- successful runner evidence when `require_runner=true`; prefer a `delivery_ready` portable summary under `evidence/runs/`, while legacy `runner_{run_id}.json` remains readable for older projects;
-- explicit user acceptance when `require_user_acceptance=true`.
-- a non-empty final engineering summary.
+`--user-accepted` is an explicit caller assertion of the user's current acceptance
+for this checked scope/version, not an authentication mechanism or permission to
+archive/merge. Without it, final checks require a source-linked acceptance record.
+Do not pass it based only on tests or a prior unrelated acceptance.
 
-Recommended Task metadata:
-
-```json
-{
-  "meta": {
-    "delivery_route": {
-      "change_class": "major_change",
-      "entry": "G2",
-      "required_reviews": ["G2", "G3", "G4", "G5"],
-      "completed_reviews": [],
-      "project_revalidations": ["G2", "G4", "G5"]
-    },
-    "delivery_requirements": {
-      "require_pr": true,
-      "require_runner": true,
-      "require_user_acceptance": true
-    },
-    "archive_evidence": {
-      "acceptance_criteria": [
-        {"id": "AC1", "result": "passed", "evidence_refs": ["tests/result.txt"]}
-      ],
-      "technical_checks": [
-        {"name": "unit tests", "result": "passed", "evidence_refs": ["tests/result.txt"]}
-      ],
-      "commit": "abc1234",
-      "pr_url": "https://gitea.example/pr/12",
-      "runner_refs": ["evidence/runs/delivery_001.summary.json"],
-      "user_acceptance": true,
-      "final_summary": "Accepted implementation and target-environment result."
-    }
-  }
-}
-```
-
-All three delivery requirements must be explicit. Missing fields are an incomplete
-G2 delivery contract and make the archive guard fail; they never default to
-`false` during archive.
-
-Set `require_pr=true` when the Issue or user instruction requires review-then-merge,
-or when project risk requires review isolation. `require_pr=false` means only that
-`pr_url` is not required archive evidence. It does not prescribe direct commits to
-`main`; branch isolation still follows project risk and repository policy.
-
-RPA business delivery normally requires runner evidence and user acceptance. Set
-either requirement to `false` only when it is genuinely inapplicable and the reason
-is recorded in the confirmed contract or Task notes.
-
-If the guard returns `ready=false`, do not call Trellis archive. Report the exact missing items and the smallest next action. A raw Trellis archive never closes a Project Gate, closes an Issue, merges a PR, or publishes a release.
-
-For an older Task missing delivery requirements, present the three decisions for
-user confirmation and then backfill them in the Task. Never auto-fill legacy fields
-from whether a PR or runner file happens to exist.
+Read evidence results and missing items before reporting readiness. A fresh Issue
+or PR is a platform fact; a historical comment saying "not archived" does not
+override a newer archived Task. Missing paths may resolve to a unique archived
+Task folder; ambiguous or absent artifacts stop validation.
 
 ## Migration
 
@@ -416,5 +384,5 @@ Do not sync secrets, full payloads, logs, customer rows, chat transcripts, or th
 - Do not repeat a committed Gate operation to repair a failed Task route synchronization.
 - Do not archive a Task before `archive-check` returns ready.
 - Do not let Trellis auto-commit Gate, archive, or journal changes; keep management writes reviewable and separate from business code.
-- Do not make Trellis, Project Gate Controller, Base, or Gitea a Python runner dependency.
+- Do not make Trellis, Project Gate Controller, Base, or GitHub a Python runner dependency.
 - Do not push, merge, close an Issue, publish, delete, or rewrite history without explicit authorization.
