@@ -12,6 +12,8 @@ Only the following paths are exempt record files:
 
 All other paths affect delivery, including `.trellis/scripts`, Spec, configuration, Skill instructions, dependencies, contracts, renamed/deleted code and unknown files. Every intervening commit is inspected, including merges; a code change followed by a revert still requires rerunning. Git failures fail closed. Git-ignored local configuration and business inputs are outside this tracked-code identity check; input hashes and target-environment review remain necessary.
 
+For merges, compare against parents containing the accepted baseline when available. Comparing against an older main parent would incorrectly count already accepted feature code again. When no parent contains the baseline, compare against all parents. New side-branch commits are still inspected individually, so reverted edits and merge-introduced code remain delivery changes. This is not a final-net-diff exemption.
+
 Saving summary/journal/acceptance records must not invalidate a previously verified business commit. Keep `run.commit` unchanged, retain raw Git cleanliness, and use the `version_check` result rather than editing a summary to match HEAD. `status` applies the same path policy when comparing an accepted baseline.
 
 The policy implementation is mirrored in the two standalone distributions. Meta integration tests compare the copies to prevent drift; runtime execution has no dependency on the installed Skill.

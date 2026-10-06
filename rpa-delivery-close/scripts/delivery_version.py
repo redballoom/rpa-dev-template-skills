@@ -24,6 +24,34 @@ def paths(output):
     return {path for path in output.split('\0') if path}
 
 
+def committed_paths(repo, baseline, head):
+    """Inspect new commits without re-counting accepted code at a merge."""
+    changed = set()
+    contains_baseline = {baseline: True}
+    for line in git(repo, 'rev-list', '--parents', f'{baseline}..{head}').splitlines():
+        commit, *parents = line.split()
+        if len(parents) > 1:
+            for parent in parents:
+                if parent not in contains_baseline:
+                    try:
+                        git(repo, 'merge-base', '--is-ancestor', baseline, parent)
+                        contains_baseline[parent] = True
+                    except subprocess.CalledProcessError as exc:
+                        if exc.returncode != 1:
+                            raise
+                        contains_baseline[parent] = False
+            # An older main parent lacks code already accepted on the feature
+            # branch. Compare to accepted-lineage parents instead. Side-branch
+            # commits are still visited individually, including reverted edits.
+            parents = [p for p in parents if contains_baseline[p]] or parents
+        if not parents:
+            changed |= paths(git(repo, 'diff-tree', '--root', '--no-commit-id',
+                                 '-r', '--name-only', '--no-renames', '-z', commit))
+        for parent in parents:
+            changed |= paths(git(repo, 'diff', '--name-only', '--no-renames', '-z', parent, commit))
+    return changed
+
+
 def delivery_version(repo, baseline=None):
     """Fail closed on Git errors, divergence, staged edits, renames and unknown files."""
     result = {'ok': False, 'head': '', 'working_tree_clean': False,
@@ -42,11 +70,8 @@ def delivery_version(repo, baseline=None):
         if baseline is not None:
             if not re.fullmatch(r'[0-9a-fA-F]{40}', baseline):
                 raise ValueError('baseline must be an exact commit')
-            git(repo, 'merge-base', '--is-ancestor', baseline, 'HEAD')
-            # Inspect every intervening commit, not just the final net diff.
-            for commit in git(repo, 'rev-list', f'{baseline}..HEAD').splitlines():
-                committed |= paths(git(repo, 'diff-tree', '--root', '-m', '--no-commit-id',
-                                       '-r', '--name-only', '--no-renames', '-z', commit))
+            git(repo, 'merge-base', '--is-ancestor', baseline, result['head'])
+            committed = committed_paths(repo, baseline, result['head'])
         result['committed_paths'] = sorted(committed)
         result['baseline_compatible'] = not any(not is_record_path(p) for p in committed)
         result['delivery_paths'] = sorted(p for p in working | committed if not is_record_path(p))

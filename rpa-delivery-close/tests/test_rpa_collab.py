@@ -327,6 +327,32 @@ class ProjectGateControllerTests(unittest.TestCase):
         self.assertFalse(checked['delivery_ready'])
         self.assertIn('AGENTS.md', checked['version_check']['delivery_paths'])
 
+    def test_status_and_summary_survive_accepted_feature_merge(self) -> None:
+        self.init_git()
+
+        def git(*args):
+            return subprocess.run(['git', '-C', str(self.project_root), *args],
+                                  check=True, capture_output=True, text=True).stdout.strip()
+
+        main = git('branch', '--show-current')
+        git('checkout', '-b', 'accepted-feature')
+        accepted = self.commit_file('business.py', 'accepted\n', 'business')
+        MODULE.bootstrap_collaboration(bootstrap_args(self.project_root))
+        MODULE.close_gate(gate_args(self.project_root, baseline_commit=accepted))
+        summary = write_evidence_summary(self.project_root, accepted)
+        git('add', '.')
+        git('commit', '-m', 'save acceptance and summary')
+        git('checkout', main)
+        git('merge', '--no-ff', 'accepted-feature', '-m', 'merge accepted business')
+        status = MODULE.build_status(self.project_root)
+        self.assertEqual(status['delivery_baseline']['state'], 'governance_only_drift')
+        self.assertFalse(status['delivery_baseline']['requires_user_review'])
+        self.assertTrue(status['evidence_summary']['delivery_ready'])
+        self.commit_file('business.py', 'changed after merge\n', 'new code')
+        status = MODULE.build_status(self.project_root)
+        self.assertEqual(status['delivery_baseline']['state'], 'unaccepted_delivery_drift')
+        self.assertFalse(MODULE.validate_evidence_summary(self.project_root, summary)['delivery_ready'])
+
     def test_v2_delivery_clean_is_separate_from_raw_git_clean(self) -> None:
         commit = self.init_git()
         path = write_evidence_summary(self.project_root, commit, clean=False)
